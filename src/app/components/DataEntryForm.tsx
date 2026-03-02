@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Save,
   Upload,
@@ -92,6 +92,9 @@ const dedupeAddresses = (addresses: KenAllAddress[]) => {
 };
 
 const FULL_WIDTH_SPACE = "　";
+const SUGGESTION_ITEM_HEIGHT = 36;
+const SUGGESTION_PANEL_MAX_HEIGHT = 288;
+const SUGGESTION_OVERSCAN = 6;
 
 const joinWithFullWidthSpace = (parts: string[]) => {
   return parts.filter(Boolean).join(FULL_WIDTH_SPACE);
@@ -243,6 +246,105 @@ const expandCompanyShortcut = (rawValue: string): string => {
   return COMPANY_SHORTCUT_MAP[key] ?? rawValue;
 };
 
+interface VirtualSuggestionListProps {
+  count: number;
+  activeIndex: number;
+  getKey: (index: number) => string;
+  getLabel: (index: number) => string;
+  onHover: (index: number) => void;
+  onSelect: (index: number) => void;
+}
+
+const VirtualSuggestionList = ({
+  count,
+  activeIndex,
+  getKey,
+  getLabel,
+  onHover,
+  onSelect,
+}: VirtualSuggestionListProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  const viewportHeight = Math.min(
+    SUGGESTION_PANEL_MAX_HEIGHT,
+    count * SUGGESTION_ITEM_HEIGHT
+  );
+
+  const startIndex = Math.max(
+    0,
+    Math.floor(scrollTop / SUGGESTION_ITEM_HEIGHT) - SUGGESTION_OVERSCAN
+  );
+  const endIndex = Math.min(
+    count,
+    Math.ceil((scrollTop + viewportHeight) / SUGGESTION_ITEM_HEIGHT) +
+      SUGGESTION_OVERSCAN
+  );
+
+  useEffect(() => {
+    if (activeIndex < 0) {
+      return;
+    }
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const itemTop = activeIndex * SUGGESTION_ITEM_HEIGHT;
+    const itemBottom = itemTop + SUGGESTION_ITEM_HEIGHT;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+
+    if (itemTop < viewTop) {
+      container.scrollTop = itemTop;
+      return;
+    }
+    if (itemBottom > viewBottom) {
+      container.scrollTop = itemBottom - container.clientHeight;
+    }
+  }, [activeIndex]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="max-h-72 overflow-y-auto"
+      onScroll={(e) => {
+        setScrollTop((e.target as HTMLDivElement).scrollTop);
+      }}
+    >
+      <div
+        className="relative"
+        style={{ height: count * SUGGESTION_ITEM_HEIGHT }}
+      >
+        {Array.from(
+          { length: Math.max(0, endIndex - startIndex) },
+          (_, offset) => {
+            const index = startIndex + offset;
+            const isActive = activeIndex === index;
+
+            return (
+              <button
+                key={getKey(index)}
+                type="button"
+                onClick={() => onSelect(index)}
+                onMouseEnter={() => onHover(index)}
+                className={`absolute left-0 right-0 text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
+                  isActive ? "bg-blue-100" : "hover:bg-blue-50"
+                }`}
+                style={{
+                  top: index * SUGGESTION_ITEM_HEIGHT,
+                  height: SUGGESTION_ITEM_HEIGHT,
+                }}
+              >
+                {getLabel(index)}
+              </button>
+            );
+          }
+        )}
+      </div>
+    </div>
+  );
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
@@ -313,6 +415,10 @@ export function DataEntryForm() {
   const [isCityComposing, setIsCityComposing] = useState(false);
   const [isTownComposing, setIsTownComposing] = useState(false);
   const basicFormRef = useRef<HTMLDivElement>(null);
+  const deferredPostalCode = useDeferredValue(formData.postalCode);
+  const deferredPrefecture = useDeferredValue(formData.prefecture);
+  const deferredCity = useDeferredValue(formData.city);
+  const deferredTown = useDeferredValue(formData.town);
 
   const prefectureCandidates = useMemo(() => {
     const uniquePrefectureCandidatesMap = new Map<string, PrefectureCandidate>();
@@ -409,15 +515,15 @@ export function DataEntryForm() {
     return findCitySuggestions(
       kenAllAddresses,
       {
-        prefecture: formData.prefecture,
-        city: formData.city,
-        town: formData.town,
+        prefecture: deferredPrefecture,
+        city: deferredCity,
+        town: deferredTown,
       }
     );
   }, [
-    formData.prefecture,
-    formData.city,
-    formData.town,
+    deferredPrefecture,
+    deferredCity,
+    deferredTown,
     isCityComposing,
     kenAllAddresses,
   ]);
@@ -431,15 +537,15 @@ export function DataEntryForm() {
     return findTownSuggestions(
       kenAllAddresses,
       {
-        prefecture: formData.prefecture,
-        city: formData.city,
-        town: formData.town,
+        prefecture: deferredPrefecture,
+        city: deferredCity,
+        town: deferredTown,
       }
     );
   }, [
-    formData.prefecture,
-    formData.city,
-    formData.town,
+    deferredPrefecture,
+    deferredCity,
+    deferredTown,
     isTownComposing,
     kenAllAddresses,
   ]);
@@ -450,7 +556,7 @@ export function DataEntryForm() {
       return [];
     }
 
-    const prefecture = formData.prefecture.trim();
+    const prefecture = deferredPrefecture.trim();
 
     if (!prefecture) {
       return [];
@@ -458,14 +564,14 @@ export function DataEntryForm() {
 
     return findPrefectureSuggestions(prefectureCandidates, prefecture);
   }, [
-    formData.prefecture,
+    deferredPrefecture,
     isPrefectureComposing,
     prefectureCandidates,
   ]);
 
   // 郵便番号入力向けの候補
   const postalCodeSuggestions = useMemo(() => {
-    const normalizedPostalCode = formData.postalCode.replace(/[^\d]/g, "");
+    const normalizedPostalCode = deferredPostalCode.replace(/[^\d]/g, "");
     if (!normalizedPostalCode) {
       return [];
     }
@@ -474,7 +580,7 @@ export function DataEntryForm() {
       kenAllAddresses
         .filter((address) => address.postalCode.startsWith(normalizedPostalCode))
     );
-  }, [formData.postalCode, kenAllAddresses]);
+  }, [deferredPostalCode, kenAllAddresses]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -1082,33 +1188,32 @@ export function DataEntryForm() {
                       ) : postalCodeSuggestions.length === 0 ? (
                         <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
                       ) : (
-                        <div className="max-h-72 overflow-y-auto py-1">
-                          {postalCodeSuggestions.map((suggestion, index) => (
-                            <button
-                              key={`postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
-                              type="button"
-                              onClick={() => applyAddressSuggestion(suggestion)}
-                              onMouseEnter={() =>
-                                setActiveSuggestionIndex((prev) => ({
-                                  ...prev,
-                                  postal: index,
-                                }))
-                              }
-                              className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
-                                activeSuggestionIndex.postal === index
-                                  ? "bg-blue-100"
-                                  : "hover:bg-blue-50"
-                              }`}
-                            >
-                              {joinWithFullWidthSpace([
-                                suggestion.postalCode,
-                                suggestion.prefecture,
-                                suggestion.city,
-                                suggestion.town || "（町域なし）",
-                              ])}
-                            </button>
-                          ))}
-                        </div>
+                        <VirtualSuggestionList
+                          count={postalCodeSuggestions.length}
+                          activeIndex={activeSuggestionIndex.postal}
+                          getKey={(index) => {
+                            const suggestion = postalCodeSuggestions[index];
+                            return `postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`;
+                          }}
+                          getLabel={(index) => {
+                            const suggestion = postalCodeSuggestions[index];
+                            return joinWithFullWidthSpace([
+                              suggestion.postalCode,
+                              suggestion.prefecture,
+                              suggestion.city,
+                              suggestion.town || "（町域なし）",
+                            ]);
+                          }}
+                          onHover={(index) =>
+                            setActiveSuggestionIndex((prev) => ({
+                              ...prev,
+                              postal: index,
+                            }))
+                          }
+                          onSelect={(index) =>
+                            applyAddressSuggestion(postalCodeSuggestions[index])
+                          }
+                        />
                       )}
                     </div>
                   )}
@@ -1167,28 +1272,23 @@ export function DataEntryForm() {
                         ) : prefectureSuggestions.length === 0 ? (
                           <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
                         ) : (
-                          <div className="max-h-72 overflow-y-auto py-1">
-                            {prefectureSuggestions.map((suggestion, index) => (
-                              <button
-                                key={`prefecture-suggestion-${suggestion}-${index}`}
-                                type="button"
-                                onClick={() => applyPrefectureSuggestion(suggestion)}
-                                onMouseEnter={() =>
-                                  setActiveSuggestionIndex((prev) => ({
-                                    ...prev,
-                                    prefecture: index,
-                                  }))
-                                }
-                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
-                                  activeSuggestionIndex.prefecture === index
-                                    ? "bg-blue-100"
-                                    : "hover:bg-blue-50"
-                                }`}
-                              >
-                                {suggestion}
-                              </button>
-                            ))}
-                          </div>
+                          <VirtualSuggestionList
+                            count={prefectureSuggestions.length}
+                            activeIndex={activeSuggestionIndex.prefecture}
+                            getKey={(index) =>
+                              `prefecture-suggestion-${prefectureSuggestions[index]}-${index}`
+                            }
+                            getLabel={(index) => prefectureSuggestions[index]}
+                            onHover={(index) =>
+                              setActiveSuggestionIndex((prev) => ({
+                                ...prev,
+                                prefecture: index,
+                              }))
+                            }
+                            onSelect={(index) =>
+                              applyPrefectureSuggestion(prefectureSuggestions[index])
+                            }
+                          />
                         )}
                       </div>
                     )}
@@ -1240,31 +1340,30 @@ export function DataEntryForm() {
                         ) : citySuggestions.length === 0 ? (
                           <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
                         ) : (
-                          <div className="max-h-72 overflow-y-auto py-1">
-                            {citySuggestions.map((suggestion, index) => (
-                              <button
-                                key={`city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`}
-                                type="button"
-                                onClick={() => applyCitySuggestion(suggestion)}
-                                onMouseEnter={() =>
-                                  setActiveSuggestionIndex((prev) => ({
-                                    ...prev,
-                                    city: index,
-                                  }))
-                                }
-                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
-                                  activeSuggestionIndex.city === index
-                                    ? "bg-blue-100"
-                                    : "hover:bg-blue-50"
-                                }`}
-                              >
-                                {joinWithFullWidthSpace([
-                                  suggestion.prefecture,
-                                  suggestion.city,
-                                ])}
-                              </button>
-                            ))}
-                          </div>
+                          <VirtualSuggestionList
+                            count={citySuggestions.length}
+                            activeIndex={activeSuggestionIndex.city}
+                            getKey={(index) => {
+                              const suggestion = citySuggestions[index];
+                              return `city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`;
+                            }}
+                            getLabel={(index) => {
+                              const suggestion = citySuggestions[index];
+                              return joinWithFullWidthSpace([
+                                suggestion.prefecture,
+                                suggestion.city,
+                              ]);
+                            }}
+                            onHover={(index) =>
+                              setActiveSuggestionIndex((prev) => ({
+                                ...prev,
+                                city: index,
+                              }))
+                            }
+                            onSelect={(index) =>
+                              applyCitySuggestion(citySuggestions[index])
+                            }
+                          />
                         )}
                       </div>
                     )}
@@ -1316,32 +1415,31 @@ export function DataEntryForm() {
                         ) : townSuggestions.length === 0 ? (
                           <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
                         ) : (
-                          <div className="max-h-72 overflow-y-auto py-1">
-                            {townSuggestions.map((suggestion, index) => (
-                              <button
-                                key={`town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
-                                type="button"
-                                onClick={() => applyAddressSuggestion(suggestion)}
-                                onMouseEnter={() =>
-                                  setActiveSuggestionIndex((prev) => ({
-                                    ...prev,
-                                    town: index,
-                                  }))
-                                }
-                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
-                                  activeSuggestionIndex.town === index
-                                    ? "bg-blue-100"
-                                    : "hover:bg-blue-50"
-                                }`}
-                              >
-                                {joinWithFullWidthSpace([
-                                  suggestion.prefecture,
-                                  suggestion.city,
-                                  suggestion.town || "（町域なし）",
-                                ])}
-                              </button>
-                            ))}
-                          </div>
+                          <VirtualSuggestionList
+                            count={townSuggestions.length}
+                            activeIndex={activeSuggestionIndex.town}
+                            getKey={(index) => {
+                              const suggestion = townSuggestions[index];
+                              return `town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`;
+                            }}
+                            getLabel={(index) => {
+                              const suggestion = townSuggestions[index];
+                              return joinWithFullWidthSpace([
+                                suggestion.prefecture,
+                                suggestion.city,
+                                suggestion.town || "（町域なし）",
+                              ]);
+                            }}
+                            onHover={(index) =>
+                              setActiveSuggestionIndex((prev) => ({
+                                ...prev,
+                                town: index,
+                              }))
+                            }
+                            onSelect={(index) =>
+                              applyAddressSuggestion(townSuggestions[index])
+                            }
+                          />
                         )}
                       </div>
                     )}

@@ -21,6 +21,7 @@ export interface AddressQuery {
 
 const KEN_ALL_CSV_URL = new URL("../../../KEN_ALL.CSV", import.meta.url).href;
 const KEN_ALL_MIN_COLUMNS = 9;
+const PARSE_YIELD_LINE_INTERVAL = 2500;
 
 let kenAllCachePromise: Promise<KenAllAddress[]> | null = null;
 
@@ -88,9 +89,19 @@ export const loadKenAllData = async (): Promise<KenAllAddress[]> => {
     const buffer = await response.arrayBuffer();
     const csvText = decodeKenAll(buffer);
     const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-    const parsed = lines
-      .map(parseKenAllLine)
-      .filter((address): address is KenAllAddress => address !== null);
+    const parsed: KenAllAddress[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const address = parseKenAllLine(lines[i]);
+      if (address) {
+        parsed.push(address);
+      }
+
+      if ((i + 1) % PARSE_YIELD_LINE_INTERVAL === 0) {
+        await new Promise<void>((resolve) => {
+          setTimeout(() => resolve(), 0);
+        });
+      }
+    }
 
     return parsed;
   })();
