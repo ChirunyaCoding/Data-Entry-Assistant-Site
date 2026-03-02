@@ -751,7 +751,6 @@ export function DataEntryForm() {
                                 className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
                               >
                                 {joinWithFullWidthSpace([
-                                  suggestion.postalCode,
                                   suggestion.prefecture,
                                   suggestion.city,
                                   suggestion.town || "（町域なし）",
