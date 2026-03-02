@@ -1,16 +1,8 @@
-import { kanaToRomaji, toKatakana } from "./japaneseTextSearch.ts";
-
 export interface KenAllAddress {
   postalCode: string;
   prefecture: string;
-  prefectureKana: string;
-  prefectureRomaji: string;
   city: string;
-  cityKana: string;
-  cityRomaji: string;
   town: string;
-  townKana: string;
-  townRomaji: string;
 }
 
 export interface AddressQuery {
@@ -47,14 +39,10 @@ const parseKenAllLine = (line: string): KenAllAddress | null => {
   }
 
   const postalCode = unquote(columns[2]).replace(/[^\d]/g, "");
-  const prefectureKana = toKatakana(unquote(columns[3]));
-  const cityKana = toKatakana(unquote(columns[4]));
-  const townKanaRaw = toKatakana(unquote(columns[5]));
   const prefecture = unquote(columns[6]);
   const city = unquote(columns[7]);
   const townRaw = unquote(columns[8]);
   const town = townRaw === "以下に掲載がない場合" ? "" : townRaw;
-  const townKana = town ? townKanaRaw : "";
 
   if (!postalCode || !prefecture || !city) {
     return null;
@@ -63,14 +51,8 @@ const parseKenAllLine = (line: string): KenAllAddress | null => {
   return {
     postalCode,
     prefecture,
-    prefectureKana,
-    prefectureRomaji: kanaToRomaji(prefectureKana),
     city,
-    cityKana,
-    cityRomaji: kanaToRomaji(cityKana),
     town,
-    townKana,
-    townRomaji: kanaToRomaji(townKana),
   };
 };
 

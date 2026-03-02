@@ -1,0 +1,74 @@
+import type { AddressQuery, KenAllAddress } from "./kenAll";
+
+const uniqueBy = <T,>(items: T[], keyResolver: (item: T) => string): T[] => {
+  const seen = new Set<string>();
+  const results: T[] = [];
+
+  for (const item of items) {
+    const key = keyResolver(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    results.push(item);
+  }
+
+  return results;
+};
+
+export const findCitySuggestions = (
+  addresses: KenAllAddress[],
+  query: AddressQuery,
+  limit = 10
+): KenAllAddress[] => {
+  const prefecture = query.prefecture.trim();
+  const city = query.city.trim();
+  const town = query.town.trim();
+
+  if (!city || town) {
+    return [];
+  }
+
+  const filtered = addresses.filter((address) => {
+    if (prefecture && !address.prefecture.includes(prefecture)) {
+      return false;
+    }
+
+    return address.city.includes(city);
+  });
+
+  return uniqueBy(filtered, (address) => `${address.prefecture}|${address.city}`).slice(
+    0,
+    limit
+  );
+};
+
+export const findTownSuggestions = (
+  addresses: KenAllAddress[],
+  query: AddressQuery,
+  limit = 10
+): KenAllAddress[] => {
+  const prefecture = query.prefecture.trim();
+  const city = query.city.trim();
+  const town = query.town.trim();
+
+  if (!town) {
+    return [];
+  }
+
+  const filtered = addresses.filter((address) => {
+    if (prefecture && !address.prefecture.includes(prefecture)) {
+      return false;
+    }
+    if (city && !address.city.includes(city)) {
+      return false;
+    }
+
+    return address.town.includes(town);
+  });
+
+  return uniqueBy(
+    filtered,
+    (address) => `${address.prefecture}|${address.city}|${address.town}`
+  ).slice(0, limit);
+};

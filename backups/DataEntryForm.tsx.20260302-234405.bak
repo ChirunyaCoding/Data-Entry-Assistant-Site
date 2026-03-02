@@ -3,12 +3,9 @@ import { Save, Upload, FileText, User, Trash2, Table2, Link, FileUser, Copy, Che
 import {
   type KenAllAddress,
   loadKenAllData,
+  searchKenAllAddresses,
 } from "../lib/kenAll";
-import {
-  type PrefectureCandidate,
-  findPrefectureSuggestions,
-} from "../lib/prefectureSearch";
-import { findCitySuggestions, findTownSuggestions } from "../lib/addressSuggestions";
+import { findPrefectureSuggestions } from "../lib/prefectureSearch";
 
 interface FormData {
   operator: string;
@@ -160,29 +157,24 @@ export function DataEntryForm() {
     };
   }, []);
 
-  // 市区町村入力中は市区町村候補を出す
-  const citySuggestions = useMemo(() => {
-    return findCitySuggestions(
-      kenAllAddresses,
-      {
-        prefecture: formData.prefecture,
-        city: formData.city,
-        town: formData.town,
-      },
-      10
-    );
-  }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
+  // 基本モード（都道府県・市区町村・町域）入力向けの候補
+  const detailedAddressSuggestions = useMemo(() => {
+    const city = formData.city.trim();
+    const town = formData.town.trim();
+    if (!city && !town) {
+      return [];
+    }
 
-  // 町域入力中は町域候補を出す
-  const townSuggestions = useMemo(() => {
-    return findTownSuggestions(
-      kenAllAddresses,
-      {
-        prefecture: formData.prefecture,
-        city: formData.city,
-        town: formData.town,
-      },
-      10
+    return dedupeAddresses(
+      searchKenAllAddresses(
+        kenAllAddresses,
+        {
+          prefecture: formData.prefecture,
+          city: formData.city,
+          town: formData.town,
+        },
+        10
+      )
     );
   }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
 
@@ -196,23 +188,11 @@ export function DataEntryForm() {
       return [];
     }
 
-    const uniquePrefectureCandidatesMap = new Map<string, PrefectureCandidate>();
-    for (const address of kenAllAddresses) {
-      if (uniquePrefectureCandidatesMap.has(address.prefecture)) {
-        continue;
-      }
-      uniquePrefectureCandidatesMap.set(address.prefecture, {
-        prefecture: address.prefecture,
-        prefectureKana: address.prefectureKana,
-        prefectureRomaji: address.prefectureRomaji,
-      });
-    }
-
-    const uniquePrefectureCandidates = Array.from(
-      uniquePrefectureCandidatesMap.values()
+    const uniquePrefectures = Array.from(
+      new Set(kenAllAddresses.map((address) => address.prefecture))
     );
 
-    return findPrefectureSuggestions(uniquePrefectureCandidates, prefecture, 10);
+    return findPrefectureSuggestions(uniquePrefectures, prefecture, 10);
   }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
 
   // 郵便番号入力向けの候補
@@ -253,14 +233,6 @@ export function DataEntryForm() {
     setFormData((prev) => ({
       ...prev,
       prefecture,
-    }));
-  };
-
-  const applyCitySuggestion = (address: KenAllAddress) => {
-    setFormData((prev) => ({
-      ...prev,
-      prefecture: address.prefecture,
-      city: address.city,
     }));
   };
 
@@ -650,25 +622,13 @@ export function DataEntryForm() {
                           </button>
                         ))}
                       </div>
-                    ) : citySuggestions.length > 0 ? (
+                    ) : detailedAddressSuggestions.length === 0 ? (
+                      <div className="text-sm text-gray-500">該当する候補がありません</div>
+                    ) : (
                       <div className="space-y-1">
-                        {citySuggestions.map((suggestion, index) => (
+                        {detailedAddressSuggestions.map((suggestion, index) => (
                           <button
-                            key={`city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`}
-                            type="button"
-                            onClick={() => applyCitySuggestion(suggestion)}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
-                          >
-                            {suggestion.prefecture}
-                            {suggestion.city}
-                          </button>
-                        ))}
-                      </div>
-                    ) : townSuggestions.length > 0 ? (
-                      <div className="space-y-1">
-                        {townSuggestions.map((suggestion, index) => (
-                          <button
-                            key={`town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
+                            key={`address-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
                             type="button"
                             onClick={() => applyAddressSuggestion(suggestion)}
                             className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
@@ -682,8 +642,6 @@ export function DataEntryForm() {
                           </button>
                         ))}
                       </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">該当する候補がありません</div>
                     )}
                   </div>
                 )}
