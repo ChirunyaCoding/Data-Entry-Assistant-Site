@@ -78,6 +78,12 @@ const dedupeAddresses = (addresses: KenAllAddress[]) => {
   return unique;
 };
 
+const FULL_WIDTH_SPACE = "　";
+
+const joinWithFullWidthSpace = (parts: string[]) => {
+  return parts.filter(Boolean).join(FULL_WIDTH_SPACE);
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
@@ -129,6 +135,11 @@ export function DataEntryForm() {
   const [kenAllAddresses, setKenAllAddresses] = useState<KenAllAddress[]>([]);
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
+  const [isPostalSuggestionVisible, setIsPostalSuggestionVisible] = useState(false);
+  const [isPrefectureSuggestionVisible, setIsPrefectureSuggestionVisible] =
+    useState(false);
+  const [isCitySuggestionVisible, setIsCitySuggestionVisible] = useState(false);
+  const [isTownSuggestionVisible, setIsTownSuggestionVisible] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
@@ -168,8 +179,7 @@ export function DataEntryForm() {
         prefecture: formData.prefecture,
         city: formData.city,
         town: formData.town,
-      },
-      10
+      }
     );
   }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
 
@@ -181,8 +191,7 @@ export function DataEntryForm() {
         prefecture: formData.prefecture,
         city: formData.city,
         town: formData.town,
-      },
-      10
+      }
     );
   }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
 
@@ -212,7 +221,7 @@ export function DataEntryForm() {
       uniquePrefectureCandidatesMap.values()
     );
 
-    return findPrefectureSuggestions(uniquePrefectureCandidates, prefecture, 10);
+    return findPrefectureSuggestions(uniquePrefectureCandidates, prefecture);
   }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
 
   // 郵便番号入力向けの候補
@@ -225,7 +234,6 @@ export function DataEntryForm() {
     return dedupeAddresses(
       kenAllAddresses
         .filter((address) => address.postalCode.startsWith(normalizedPostalCode))
-        .slice(0, 10)
     );
   }, [formData.postalCode, kenAllAddresses]);
 
@@ -247,6 +255,10 @@ export function DataEntryForm() {
       city: address.city,
       town: address.town,
     }));
+    setIsPostalSuggestionVisible(false);
+    setIsPrefectureSuggestionVisible(false);
+    setIsCitySuggestionVisible(false);
+    setIsTownSuggestionVisible(false);
   };
 
   const applyPrefectureSuggestion = (prefecture: string) => {
@@ -254,6 +266,7 @@ export function DataEntryForm() {
       ...prev,
       prefecture,
     }));
+    setIsPrefectureSuggestionVisible(false);
   };
 
   const applyCitySuggestion = (address: KenAllAddress) => {
@@ -262,6 +275,18 @@ export function DataEntryForm() {
       prefecture: address.prefecture,
       city: address.city,
     }));
+    setIsCitySuggestionVisible(false);
+  };
+
+  const handleSuggestionAreaBlur = (
+    e: React.FocusEvent<HTMLDivElement>,
+    close: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
+    const nextTarget = e.relatedTarget as Node | null;
+    if (nextTarget && e.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    close(false);
   };
 
   const handleResidentChange = (
@@ -535,7 +560,13 @@ export function DataEntryForm() {
                 </div>
 
                 {/* 郵便番号 */}
-                <div>
+                <div
+                  className="relative"
+                  onFocusCapture={() => setIsPostalSuggestionVisible(true)}
+                  onBlurCapture={(e) =>
+                    handleSuggestionAreaBlur(e, setIsPostalSuggestionVisible)
+                  }
+                >
                   <label className="block text-sm text-gray-700 mb-1.5">
                     郵便番号
                   </label>
@@ -547,44 +578,51 @@ export function DataEntryForm() {
                     className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="000-0000"
                   />
-                </div>
 
-                {/* 住所補完表示エリア（郵便番号） */}
-                {formData.postalCode && (
-                  <div className="bg-blue-50 border border-blue-200 rounded p-3">
-                    <div className="text-xs text-blue-700 mb-1">住所補完候補</div>
-                    {isKenAllLoading ? (
-                      <div className="text-sm text-gray-600">住所マスタを読み込み中です...</div>
-                    ) : kenAllLoadError ? (
-                      <div className="text-sm text-red-600">{kenAllLoadError}</div>
-                    ) : postalCodeSuggestions.length === 0 ? (
-                      <div className="text-sm text-gray-500">該当する候補がありません</div>
-                    ) : (
-                      <div className="space-y-1">
-                        {postalCodeSuggestions.map((suggestion, index) => (
-                          <button
-                            key={`postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
-                            type="button"
-                            onClick={() => applyAddressSuggestion(suggestion)}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
-                          >
-                            <span className="font-mono text-xs text-gray-500 mr-2">
-                              {suggestion.postalCode}
-                            </span>
-                            {suggestion.prefecture}
-                            {suggestion.city}
-                            {suggestion.town || "（町域なし）"}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                  {/* 住所補完表示エリア（郵便番号） */}
+                  {isPostalSuggestionVisible && formData.postalCode && (
+                    <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                      {isKenAllLoading ? (
+                        <div className="px-3 py-2 text-sm text-gray-600">
+                          住所マスタを読み込み中です...
+                        </div>
+                      ) : kenAllLoadError ? (
+                        <div className="px-3 py-2 text-sm text-red-600">{kenAllLoadError}</div>
+                      ) : postalCodeSuggestions.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
+                      ) : (
+                        <div className="max-h-72 overflow-y-auto py-1">
+                          {postalCodeSuggestions.map((suggestion, index) => (
+                            <button
+                              key={`postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
+                              type="button"
+                              onClick={() => applyAddressSuggestion(suggestion)}
+                              className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                            >
+                              {joinWithFullWidthSpace([
+                                suggestion.postalCode,
+                                suggestion.prefecture,
+                                suggestion.city,
+                                suggestion.town || "（町域なし）",
+                              ])}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* 3列レイアウト - 都道府県、市区町村、町域 */}
                 <div className="grid grid-cols-3 gap-4">
                   {/* 都道府県 */}
-                  <div>
+                  <div
+                    className="relative"
+                    onFocusCapture={() => setIsPrefectureSuggestionVisible(true)}
+                    onBlurCapture={(e) =>
+                      handleSuggestionAreaBlur(e, setIsPrefectureSuggestionVisible)
+                    }
+                  >
                     <label className="block text-sm text-gray-700 mb-1.5">
                       都道府県
                     </label>
@@ -596,10 +634,42 @@ export function DataEntryForm() {
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="都道府県を入力"
                     />
+                    {isPrefectureSuggestionVisible && formData.prefecture && (
+                      <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                        {isKenAllLoading ? (
+                          <div className="px-3 py-2 text-sm text-gray-600">
+                            住所マスタを読み込み中です...
+                          </div>
+                        ) : kenAllLoadError ? (
+                          <div className="px-3 py-2 text-sm text-red-600">{kenAllLoadError}</div>
+                        ) : prefectureSuggestions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
+                        ) : (
+                          <div className="max-h-72 overflow-y-auto py-1">
+                            {prefectureSuggestions.map((suggestion, index) => (
+                              <button
+                                key={`prefecture-suggestion-${suggestion}-${index}`}
+                                type="button"
+                                onClick={() => applyPrefectureSuggestion(suggestion)}
+                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                              >
+                                {suggestion}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* 市区町村 */}
-                  <div>
+                  <div
+                    className="relative"
+                    onFocusCapture={() => setIsCitySuggestionVisible(true)}
+                    onBlurCapture={(e) =>
+                      handleSuggestionAreaBlur(e, setIsCitySuggestionVisible)
+                    }
+                  >
                     <label className="block text-sm text-gray-700 mb-1.5">
                       市区町村
                     </label>
@@ -611,10 +681,45 @@ export function DataEntryForm() {
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="市区町村を入力"
                     />
+                    {isCitySuggestionVisible && formData.city && (
+                      <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                        {isKenAllLoading ? (
+                          <div className="px-3 py-2 text-sm text-gray-600">
+                            住所マスタを読み込み中です...
+                          </div>
+                        ) : kenAllLoadError ? (
+                          <div className="px-3 py-2 text-sm text-red-600">{kenAllLoadError}</div>
+                        ) : citySuggestions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
+                        ) : (
+                          <div className="max-h-72 overflow-y-auto py-1">
+                            {citySuggestions.map((suggestion, index) => (
+                              <button
+                                key={`city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`}
+                                type="button"
+                                onClick={() => applyCitySuggestion(suggestion)}
+                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                              >
+                                {joinWithFullWidthSpace([
+                                  suggestion.prefecture,
+                                  suggestion.city,
+                                ])}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* 町域 */}
-                  <div>
+                  <div
+                    className="relative"
+                    onFocusCapture={() => setIsTownSuggestionVisible(true)}
+                    onBlurCapture={(e) =>
+                      handleSuggestionAreaBlur(e, setIsTownSuggestionVisible)
+                    }
+                  >
                     <label className="block text-sm text-gray-700 mb-1.5">
                       町域
                     </label>
@@ -626,67 +731,39 @@ export function DataEntryForm() {
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="町域を入力"
                     />
-                  </div>
-                </div>
-
-                {/* 住所補完表示エリア（都道府県・市区町村・町域） */}
-                {(formData.prefecture || formData.city || formData.town) && (
-                  <div className="bg-blue-50 border border-blue-200 rounded p-3">
-                    <div className="text-xs text-blue-700 mb-1">住所補完候補</div>
-                    {isKenAllLoading ? (
-                      <div className="text-sm text-gray-600">住所マスタを読み込み中です...</div>
-                    ) : kenAllLoadError ? (
-                      <div className="text-sm text-red-600">{kenAllLoadError}</div>
-                    ) : prefectureSuggestions.length > 0 ? (
-                      <div className="space-y-1">
-                        {prefectureSuggestions.map((suggestion, index) => (
-                          <button
-                            key={`prefecture-suggestion-${suggestion}-${index}`}
-                            type="button"
-                            onClick={() => applyPrefectureSuggestion(suggestion)}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
-                          >
-                            {suggestion}
-                          </button>
-                        ))}
+                    {isTownSuggestionVisible && formData.town && (
+                      <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                        {isKenAllLoading ? (
+                          <div className="px-3 py-2 text-sm text-gray-600">
+                            住所マスタを読み込み中です...
+                          </div>
+                        ) : kenAllLoadError ? (
+                          <div className="px-3 py-2 text-sm text-red-600">{kenAllLoadError}</div>
+                        ) : townSuggestions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">該当する候補がありません</div>
+                        ) : (
+                          <div className="max-h-72 overflow-y-auto py-1">
+                            {townSuggestions.map((suggestion, index) => (
+                              <button
+                                key={`town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
+                                type="button"
+                                onClick={() => applyAddressSuggestion(suggestion)}
+                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                              >
+                                {joinWithFullWidthSpace([
+                                  suggestion.postalCode,
+                                  suggestion.prefecture,
+                                  suggestion.city,
+                                  suggestion.town || "（町域なし）",
+                                ])}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ) : citySuggestions.length > 0 ? (
-                      <div className="space-y-1">
-                        {citySuggestions.map((suggestion, index) => (
-                          <button
-                            key={`city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`}
-                            type="button"
-                            onClick={() => applyCitySuggestion(suggestion)}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
-                          >
-                            {suggestion.prefecture}
-                            {suggestion.city}
-                          </button>
-                        ))}
-                      </div>
-                    ) : townSuggestions.length > 0 ? (
-                      <div className="space-y-1">
-                        {townSuggestions.map((suggestion, index) => (
-                          <button
-                            key={`town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
-                            type="button"
-                            onClick={() => applyAddressSuggestion(suggestion)}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
-                          >
-                            <span className="font-mono text-xs text-gray-500 mr-2">
-                              {suggestion.postalCode}
-                            </span>
-                            {suggestion.prefecture}
-                            {suggestion.city}
-                            {suggestion.town || "（町域なし）"}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">該当する候補がありません</div>
                     )}
                   </div>
-                )}
+                </div>
 
                 {/* 3列レイアウト - 大字、字、小字 */}
                 <div className="grid grid-cols-3 gap-4">
