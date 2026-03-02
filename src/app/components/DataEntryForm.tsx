@@ -453,29 +453,8 @@ const VirtualSuggestionList = ({
   );
 };
 
-const buildSheetEmbedUrl = (rawUrl: string): string => {
-  const trimmedUrl = rawUrl.trim();
-  if (!trimmedUrl) {
-    return "";
-  }
-
-  try {
-    const parsedUrl = new URL(trimmedUrl);
-    if (parsedUrl.pathname.includes("/edit")) {
-      parsedUrl.searchParams.set("rm", "minimal");
-    }
-    return parsedUrl.toString();
-  } catch {
-    if (!trimmedUrl.includes("/edit")) {
-      return trimmedUrl;
-    }
-    if (trimmedUrl.includes("?")) {
-      return trimmedUrl.includes("rm=")
-        ? trimmedUrl
-        : `${trimmedUrl}&rm=minimal`;
-    }
-    return trimmedUrl.replace("/edit", "/edit?rm=minimal");
-  }
+const normalizeSheetUrl = (rawUrl: string): string => {
+  return rawUrl.trim();
 };
 
 export function DataEntryForm() {
@@ -532,7 +511,7 @@ export function DataEntryForm() {
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
   const [sheetUrl, setSheetUrl] = useState<string>("");
-  const sheetEmbedUrl = buildSheetEmbedUrl(sheetUrl);
+  const sheetEmbedUrl = normalizeSheetUrl(sheetUrl);
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
   const [postalCodeSuggestions, setPostalCodeSuggestions] = useState<KenAllAddress[]>([]);
@@ -3077,9 +3056,30 @@ export function DataEntryForm() {
                     className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   />
                 </div>
+                {sheetEmbedUrl ? (
+                  <a
+                    href={sheetEmbedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 whitespace-nowrap"
+                  >
+                    別タブで編集
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-3 py-2 rounded border border-gray-200 text-sm text-gray-400 bg-gray-50 whitespace-nowrap cursor-not-allowed"
+                  >
+                    別タブで編集
+                  </button>
+                )}
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 ※ スプレッドシートを「リンクを知っている全員」に共有設定してください
+              </p>
+              <p className="text-xs text-gray-500">
+                ※ 編集するには編集権限付きURLを使用してください
               </p>
             </div>
           )}
