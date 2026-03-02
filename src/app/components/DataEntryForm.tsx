@@ -354,6 +354,19 @@ const expandCompanyShortcut = (rawValue: string): string => {
   return COMPANY_SHORTCUT_MAP[key] ?? rawValue;
 };
 
+const POSITION_SHORTCUT_MAP: Record<string, string> = {
+  da: "代表取締役　",
+  だ: "代表取締役　",
+};
+
+const expandPositionShortcut = (rawValue: string): string => {
+  const key = rawValue.normalize("NFKC").trim().toLowerCase();
+  if (!key) {
+    return rawValue;
+  }
+  return POSITION_SHORTCUT_MAP[key] ?? rawValue;
+};
+
 interface VirtualSuggestionListProps {
   count: number;
   activeIndex: number;
@@ -870,6 +883,14 @@ export function DataEntryForm() {
       return;
     }
 
+    if (name === "position") {
+      setFormData((prev) => ({
+        ...prev,
+        position: expandPositionShortcut(value),
+      }));
+      return;
+    }
+
     if (name === "banchi") {
       setFormData((prev) => ({
         ...prev,
@@ -1272,7 +1293,6 @@ export function DataEntryForm() {
       savedAt: new Date().toISOString(),
     };
     setSavedEntries((prev) => [...prev, newEntry]);
-    alert("データを保存しました");
   };
 
   const handleResidentSave = () => {
@@ -1282,7 +1302,6 @@ export function DataEntryForm() {
       savedAt: new Date().toISOString(),
     };
     setSavedResidentEntries((prev) => [...prev, newEntry]);
-    alert("データを保存しました");
   };
 
   const handleClear = () => {
@@ -1341,7 +1360,6 @@ export function DataEntryForm() {
 
   const handleCopyBasicEntries = async () => {
     if (savedEntries.length === 0) {
-      alert("コピーするデータがありません");
       return;
     }
 
@@ -1371,7 +1389,6 @@ export function DataEntryForm() {
     try {
       // Try modern Clipboard API first
       await navigator.clipboard.writeText(tsvData);
-      alert(`${savedEntries.length}件のデータをコピーしました`);
     } catch (err) {
       // Fallback to textarea method
       try {
@@ -1383,9 +1400,7 @@ export function DataEntryForm() {
         textarea.select();
         document.execCommand("copy");
         document.body.removeChild(textarea);
-        alert(`${savedEntries.length}件のデータをコピーしました`);
       } catch (fallbackErr) {
-        alert("コピーに失敗しました");
         console.error(err, fallbackErr);
       }
     }
@@ -1393,7 +1408,6 @@ export function DataEntryForm() {
 
   const handleCopyResidentEntries = async () => {
     if (savedResidentEntries.length === 0) {
-      alert("コピーするデータがありません");
       return;
     }
 
@@ -1425,7 +1439,6 @@ export function DataEntryForm() {
     try {
       // Try modern Clipboard API first
       await navigator.clipboard.writeText(tsvData);
-      alert(`${savedResidentEntries.length}件のデータをコピーしました`);
     } catch (err) {
       // Fallback to textarea method
       try {
@@ -1437,9 +1450,7 @@ export function DataEntryForm() {
         textarea.select();
         document.execCommand("copy");
         document.body.removeChild(textarea);
-        alert(`${savedResidentEntries.length}件のデータをコピーしました`);
       } catch (fallbackErr) {
-        alert("コピーに失敗しました");
         console.error(err, fallbackErr);
       }
     }
