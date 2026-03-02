@@ -435,10 +435,6 @@ export function DataEntryForm() {
       return;
     }
 
-    if (name === "postalCode") {
-      setActiveSuggestionIndex((prev) => ({ ...prev, postal: -1 }));
-      setIsPostalSuggestionVisible(value.trim().length > 0);
-    }
     if (name === "prefecture") {
       setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
       setIsPrefectureSuggestionVisible(value.trim().length > 0);
@@ -568,7 +564,7 @@ export function DataEntryForm() {
   const applyAddressSuggestion = (address: KenAllAddress) => {
     setFormData((prev) => ({
       ...prev,
-      postalCode: address.postalCode,
+      postalCode: formatPostalCode(address.postalCode),
       prefecture: address.prefecture,
       city: address.city,
       town: address.town,
@@ -643,7 +639,10 @@ export function DataEntryForm() {
         return;
       }
       const index = activeSuggestionIndex[type];
-      if (index < 0 || index >= count) {
+      if (index < 0) {
+        return;
+      }
+      if (index >= count) {
         return;
       }
       e.preventDefault();
@@ -862,9 +861,19 @@ export function DataEntryForm() {
       {/* 左側：入力フォーム */}
       <div className="w-1/2 bg-white border-r border-gray-200 overflow-y-auto">
         <div className="p-8">
-          <div className="mb-6 flex items-center gap-3">
-            <User className="w-8 h-8 text-blue-600" />
-            <h1 className="text-2xl text-gray-900">データ入力補助ツール</h1>
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <User className="w-8 h-8 text-blue-600" />
+              <h1 className="text-2xl text-gray-900">データ入力補助ツール</h1>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen((prev) => !prev)}
+              className="px-3 py-2 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 flex items-center gap-2 text-sm"
+            >
+              <Settings className="w-4 h-4" />
+              設定
+            </button>
           </div>
 
           {/* モード切り替えボタン */}
@@ -893,10 +902,53 @@ export function DataEntryForm() {
             </button>
           </div>
 
+          {isSettingsOpen && (
+            <div className="mb-6 p-4 rounded border border-gray-200 bg-gray-50 space-y-3">
+              <h2 className="text-sm font-semibold text-gray-800">設定</h2>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={settings.isOperatorFixed}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      isOperatorFixed: e.target.checked,
+                    }))
+                  }
+                />
+                入力者名を固定する
+              </label>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  固定する入力者名
+                </label>
+                <input
+                  type="text"
+                  value={settings.fixedOperatorName}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      fixedOperatorName: e.target.value,
+                    }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="例: 田中 太郎"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                電話番号は通常入力で携帯形式、Shiftキーを押して入力すると固定電話形式になります。
+              </p>
+            </div>
+          )}
+
           {mode === "basic" ? (
             // 基本モード
             <>
-              <div className="space-y-4">
+              <div
+                ref={basicFormRef}
+                className="space-y-4"
+                onKeyDown={handleBasicFormNavigation}
+              >
                 {/* 2列レイアウト - 入力者、ファイル名 */}
                 <div className="grid grid-cols-2 gap-4">
                   {/* 入力者 */}
@@ -907,9 +959,16 @@ export function DataEntryForm() {
                     <input
                       type="text"
                       name="operator"
-                      value={formData.operator}
+                      value={
+                        settings.isOperatorFixed
+                          ? settings.fixedOperatorName
+                          : formData.operator
+                      }
                       onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={settings.isOperatorFixed}
+                      className={`w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        settings.isOperatorFixed ? "bg-gray-100 text-gray-500" : ""
+                      }`}
                       placeholder="入力者名を入力"
                     />
                   </div>
@@ -1380,9 +1439,18 @@ export function DataEntryForm() {
                       name="phone"
                       value={formData.phone}
                       onChange={handleChange}
+                      onFocus={() => setPhoneInputMode("mobile")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Shift") {
+                          setPhoneInputMode("landline");
+                        }
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="000-0000-0000"
                     />
+                    <p className="mt-1 text-xs text-gray-500">
+                      通常: 携帯番号 / Shift押下: 固定電話形式
+                    </p>
                   </div>
                 </div>
 
