@@ -685,7 +685,12 @@ export function DataEntryForm() {
     selectByIndex: (index: number) => void,
     hide: React.Dispatch<React.SetStateAction<boolean>>
   ) => {
+    const isSuggestionShortcut = e.ctrlKey;
+
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!isSuggestionShortcut) {
+        return;
+      }
       show(true);
       if (count === 0) {
         return;
@@ -703,6 +708,9 @@ export function DataEntryForm() {
     }
 
     if (e.key === "Enter") {
+      if (!isSuggestionShortcut) {
+        return;
+      }
       if (!isVisible || count === 0) {
         return;
       }
@@ -1329,6 +1337,9 @@ export function DataEntryForm() {
                     )}
                   </div>
                 </div>
+                <p className="text-xs text-gray-500">
+                  補完候補をキーボードで選ぶ場合は Ctrl+↓/Ctrl+↑/Ctrl+Enter を使用します。
+                </p>
 
                 {/* 3列レイアウト - 大字、字、小字 */}
                 <div className="grid grid-cols-3 gap-4">

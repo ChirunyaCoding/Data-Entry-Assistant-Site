@@ -8,6 +8,50 @@ import {
   type MatchQueryTokens,
 } from "./japaneseTextSearch.ts";
 
+interface AddressSuggestionIndex {
+  cityCandidates: KenAllAddress[];
+  townCandidates: KenAllAddress[];
+}
+
+const ADDRESS_INDEX_CACHE = new WeakMap<KenAllAddress[], AddressSuggestionIndex>();
+
+const getAddressSuggestionIndex = (
+  addresses: KenAllAddress[]
+): AddressSuggestionIndex => {
+  const cached = ADDRESS_INDEX_CACHE.get(addresses);
+  if (cached) {
+    return cached;
+  }
+
+  const citySeen = new Set<string>();
+  const townSeen = new Set<string>();
+  const cityCandidates: KenAllAddress[] = [];
+  const townCandidates: KenAllAddress[] = [];
+
+  for (const address of addresses) {
+    const cityKey = `${address.prefecture}|${address.city}`;
+    if (!citySeen.has(cityKey)) {
+      citySeen.add(cityKey);
+      cityCandidates.push(address);
+    }
+
+    const townKey = `${address.prefecture}|${address.city}|${address.town}`;
+    if (!townSeen.has(townKey)) {
+      townSeen.add(townKey);
+      townCandidates.push(address);
+    }
+  }
+
+  const index = { cityCandidates, townCandidates };
+  ADDRESS_INDEX_CACHE.set(addresses, index);
+  return index;
+};
+
+const isSingleAsciiLetterQuery = (value: string): boolean => {
+  const normalized = value.trim().normalize("NFKC");
+  return /^[a-z]$/i.test(normalized);
+};
+
 const uniqueBy = <T,>(items: T[], keyResolver: (item: T) => string): T[] => {
   const seen = new Set<string>();
   const results: T[] = [];
@@ -63,14 +107,18 @@ export const findCitySuggestions = (
   limit = Number.POSITIVE_INFINITY
 ): KenAllAddress[] => {
   const prefecture = query.prefecture.trim();
+  if (isSingleAsciiLetterQuery(query.city)) {
+    return [];
+  }
   const cityQueryTokens = buildQueryTokens(query.city);
   if (!cityQueryTokens.raw) {
     return [];
   }
 
+  const { cityCandidates } = getAddressSuggestionIndex(addresses);
   const prefectureQueryTokens = buildQueryTokens(prefecture);
 
-  const filtered = addresses.filter((address) => {
+  const filtered = cityCandidates.filter((address) => {
     if (
       prefecture &&
       !matchesWithTokens(
@@ -125,10 +173,7 @@ export const findCitySuggestions = (
     return a.city.localeCompare(b.city, "ja");
   });
 
-  return uniqueBy(sorted, (address) => `${address.prefecture}|${address.city}`).slice(
-    0,
-    limit
-  );
+  return uniqueBy(sorted, (address) => `${address.prefecture}|${address.city}`).slice(0, limit);
 };
 
 export const findTownSuggestions = (
@@ -137,6 +182,9 @@ export const findTownSuggestions = (
   limit = Number.POSITIVE_INFINITY
 ): KenAllAddress[] => {
   const prefecture = query.prefecture.trim();
+  if (isSingleAsciiLetterQuery(query.town)) {
+    return [];
+  }
   const cityQueryTokens = buildQueryTokens(query.city);
   const townQueryTokens = buildQueryTokens(query.town);
 
@@ -144,9 +192,10 @@ export const findTownSuggestions = (
     return [];
   }
 
+  const { townCandidates } = getAddressSuggestionIndex(addresses);
   const prefectureQueryTokens = buildQueryTokens(prefecture);
 
-  const filtered = addresses.filter((address) => {
+  const filtered = townCandidates.filter((address) => {
     if (
       prefecture &&
       !matchesWithTokens(
