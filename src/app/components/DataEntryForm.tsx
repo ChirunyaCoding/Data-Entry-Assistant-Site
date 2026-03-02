@@ -84,6 +84,15 @@ const joinWithFullWidthSpace = (parts: string[]) => {
   return parts.filter(Boolean).join(FULL_WIDTH_SPACE);
 };
 
+type SuggestionType = "postal" | "prefecture" | "city" | "town";
+
+const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
+  postal: -1,
+  prefecture: -1,
+  city: -1,
+  town: -1,
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
@@ -140,6 +149,13 @@ export function DataEntryForm() {
     useState(false);
   const [isCitySuggestionVisible, setIsCitySuggestionVisible] = useState(false);
   const [isTownSuggestionVisible, setIsTownSuggestionVisible] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<Record<
+    SuggestionType,
+    number
+  >>(INITIAL_ACTIVE_SUGGESTION_INDEX);
+  const [isPrefectureComposing, setIsPrefectureComposing] = useState(false);
+  const [isCityComposing, setIsCityComposing] = useState(false);
+  const [isTownComposing, setIsTownComposing] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
@@ -173,6 +189,10 @@ export function DataEntryForm() {
 
   // 市区町村入力中は市区町村候補を出す
   const citySuggestions = useMemo(() => {
+    if (isCityComposing) {
+      return [];
+    }
+
     return findCitySuggestions(
       kenAllAddresses,
       {
@@ -181,10 +201,20 @@ export function DataEntryForm() {
         town: formData.town,
       }
     );
-  }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
+  }, [
+    formData.prefecture,
+    formData.city,
+    formData.town,
+    isCityComposing,
+    kenAllAddresses,
+  ]);
 
   // 町域入力中は町域候補を出す
   const townSuggestions = useMemo(() => {
+    if (isTownComposing) {
+      return [];
+    }
+
     return findTownSuggestions(
       kenAllAddresses,
       {
@@ -193,10 +223,20 @@ export function DataEntryForm() {
         town: formData.town,
       }
     );
-  }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
+  }, [
+    formData.prefecture,
+    formData.city,
+    formData.town,
+    isTownComposing,
+    kenAllAddresses,
+  ]);
 
   // 都道府県のみ入力中は都道府県候補だけを出す
   const prefectureSuggestions = useMemo(() => {
+    if (isPrefectureComposing) {
+      return [];
+    }
+
     const prefecture = formData.prefecture.trim();
     const city = formData.city.trim();
     const town = formData.town.trim();
@@ -222,7 +262,13 @@ export function DataEntryForm() {
     );
 
     return findPrefectureSuggestions(uniquePrefectureCandidates, prefecture);
-  }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
+  }, [
+    formData.prefecture,
+    formData.city,
+    formData.town,
+    isPrefectureComposing,
+    kenAllAddresses,
+  ]);
 
   // 郵便番号入力向けの候補
   const postalCodeSuggestions = useMemo(() => {
@@ -241,9 +287,59 @@ export function DataEntryForm() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
+
+    if (name === "postalCode") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, postal: -1 }));
+      setIsPostalSuggestionVisible(value.trim().length > 0);
+    }
+    if (name === "prefecture") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
+      setIsPrefectureSuggestionVisible(value.trim().length > 0);
+    }
+    if (name === "city") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, city: -1 }));
+      setIsCitySuggestionVisible(value.trim().length > 0);
+    }
+    if (name === "town") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, town: -1 }));
+      setIsTownSuggestionVisible(value.trim().length > 0);
+    }
+
     setFormData((prev) => ({
       ...prev,
       [name]: value,
+    }));
+  };
+
+  const moveSuggestionFocus = (
+    type: SuggestionType,
+    count: number,
+    direction: 1 | -1
+  ) => {
+    if (count <= 0) {
+      return;
+    }
+
+    setActiveSuggestionIndex((prev) => {
+      const current = prev[type];
+      const next =
+        current < 0
+          ? direction === 1
+            ? 0
+            : count - 1
+          : (current + direction + count) % count;
+
+      return {
+        ...prev,
+        [type]: next,
+      };
+    });
+  };
+
+  const resetSuggestionFocus = (type: SuggestionType) => {
+    setActiveSuggestionIndex((prev) => ({
+      ...prev,
+      [type]: -1,
     }));
   };
 
@@ -259,6 +355,7 @@ export function DataEntryForm() {
     setIsPrefectureSuggestionVisible(false);
     setIsCitySuggestionVisible(false);
     setIsTownSuggestionVisible(false);
+    setActiveSuggestionIndex(INITIAL_ACTIVE_SUGGESTION_INDEX);
   };
 
   const applyPrefectureSuggestion = (prefecture: string) => {
@@ -267,6 +364,7 @@ export function DataEntryForm() {
       prefecture,
     }));
     setIsPrefectureSuggestionVisible(false);
+    resetSuggestionFocus("prefecture");
   };
 
   const applyCitySuggestion = (address: KenAllAddress) => {
@@ -276,17 +374,67 @@ export function DataEntryForm() {
       city: address.city,
     }));
     setIsCitySuggestionVisible(false);
+    resetSuggestionFocus("city");
   };
 
   const handleSuggestionAreaBlur = (
     e: React.FocusEvent<HTMLDivElement>,
-    close: React.Dispatch<React.SetStateAction<boolean>>
+    close: React.Dispatch<React.SetStateAction<boolean>>,
+    type: SuggestionType
   ) => {
     const nextTarget = e.relatedTarget as Node | null;
     if (nextTarget && e.currentTarget.contains(nextTarget)) {
       return;
     }
     close(false);
+    resetSuggestionFocus(type);
+  };
+
+  const handleSuggestionKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    type: SuggestionType,
+    isVisible: boolean,
+    count: number,
+    show: React.Dispatch<React.SetStateAction<boolean>>,
+    selectByIndex: (index: number) => void,
+    hide: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      show(true);
+      if (count === 0) {
+        return;
+      }
+      e.preventDefault();
+      if (!isVisible || activeSuggestionIndex[type] < 0) {
+        setActiveSuggestionIndex((prev) => ({
+          ...prev,
+          [type]: e.key === "ArrowDown" ? 0 : count - 1,
+        }));
+        return;
+      }
+      moveSuggestionFocus(type, count, e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (e.key === "Enter") {
+      if (!isVisible || count === 0) {
+        return;
+      }
+      const index = activeSuggestionIndex[type];
+      if (index < 0 || index >= count) {
+        return;
+      }
+      e.preventDefault();
+      selectByIndex(index);
+      hide(false);
+      resetSuggestionFocus(type);
+      return;
+    }
+
+    if (e.key === "Escape") {
+      hide(false);
+      resetSuggestionFocus(type);
+    }
   };
 
   const handleResidentChange = (
@@ -562,9 +710,12 @@ export function DataEntryForm() {
                 {/* 郵便番号 */}
                 <div
                   className="relative"
-                  onFocusCapture={() => setIsPostalSuggestionVisible(true)}
+                  onFocusCapture={() => {
+                    setIsPostalSuggestionVisible(true);
+                    resetSuggestionFocus("postal");
+                  }}
                   onBlurCapture={(e) =>
-                    handleSuggestionAreaBlur(e, setIsPostalSuggestionVisible)
+                    handleSuggestionAreaBlur(e, setIsPostalSuggestionVisible, "postal")
                   }
                 >
                   <label className="block text-sm text-gray-700 mb-1.5">
@@ -575,6 +726,17 @@ export function DataEntryForm() {
                     name="postalCode"
                     value={formData.postalCode}
                     onChange={handleChange}
+                    onKeyDown={(e) =>
+                      handleSuggestionKeyDown(
+                        e,
+                        "postal",
+                        isPostalSuggestionVisible,
+                        postalCodeSuggestions.length,
+                        setIsPostalSuggestionVisible,
+                        (index) => applyAddressSuggestion(postalCodeSuggestions[index]),
+                        setIsPostalSuggestionVisible
+                      )
+                    }
                     className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="000-0000"
                   />
@@ -597,7 +759,17 @@ export function DataEntryForm() {
                               key={`postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
                               type="button"
                               onClick={() => applyAddressSuggestion(suggestion)}
-                              className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                              onMouseEnter={() =>
+                                setActiveSuggestionIndex((prev) => ({
+                                  ...prev,
+                                  postal: index,
+                                }))
+                              }
+                              className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
+                                activeSuggestionIndex.postal === index
+                                  ? "bg-blue-100"
+                                  : "hover:bg-blue-50"
+                              }`}
                             >
                               {joinWithFullWidthSpace([
                                 suggestion.postalCode,
@@ -618,9 +790,16 @@ export function DataEntryForm() {
                   {/* 都道府県 */}
                   <div
                     className="relative"
-                    onFocusCapture={() => setIsPrefectureSuggestionVisible(true)}
+                    onFocusCapture={() => {
+                      setIsPrefectureSuggestionVisible(true);
+                      resetSuggestionFocus("prefecture");
+                    }}
                     onBlurCapture={(e) =>
-                      handleSuggestionAreaBlur(e, setIsPrefectureSuggestionVisible)
+                      handleSuggestionAreaBlur(
+                        e,
+                        setIsPrefectureSuggestionVisible,
+                        "prefecture"
+                      )
                     }
                   >
                     <label className="block text-sm text-gray-700 mb-1.5">
@@ -631,6 +810,20 @@ export function DataEntryForm() {
                       name="prefecture"
                       value={formData.prefecture}
                       onChange={handleChange}
+                      onCompositionStart={() => setIsPrefectureComposing(true)}
+                      onCompositionEnd={() => setIsPrefectureComposing(false)}
+                      onKeyDown={(e) =>
+                        handleSuggestionKeyDown(
+                          e,
+                          "prefecture",
+                          isPrefectureSuggestionVisible,
+                          prefectureSuggestions.length,
+                          setIsPrefectureSuggestionVisible,
+                          (index) =>
+                            applyPrefectureSuggestion(prefectureSuggestions[index]),
+                          setIsPrefectureSuggestionVisible
+                        )
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="都道府県を入力"
                     />
@@ -651,7 +844,17 @@ export function DataEntryForm() {
                                 key={`prefecture-suggestion-${suggestion}-${index}`}
                                 type="button"
                                 onClick={() => applyPrefectureSuggestion(suggestion)}
-                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                                onMouseEnter={() =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    prefecture: index,
+                                  }))
+                                }
+                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
+                                  activeSuggestionIndex.prefecture === index
+                                    ? "bg-blue-100"
+                                    : "hover:bg-blue-50"
+                                }`}
                               >
                                 {suggestion}
                               </button>
@@ -665,9 +868,12 @@ export function DataEntryForm() {
                   {/* 市区町村 */}
                   <div
                     className="relative"
-                    onFocusCapture={() => setIsCitySuggestionVisible(true)}
+                    onFocusCapture={() => {
+                      setIsCitySuggestionVisible(true);
+                      resetSuggestionFocus("city");
+                    }}
                     onBlurCapture={(e) =>
-                      handleSuggestionAreaBlur(e, setIsCitySuggestionVisible)
+                      handleSuggestionAreaBlur(e, setIsCitySuggestionVisible, "city")
                     }
                   >
                     <label className="block text-sm text-gray-700 mb-1.5">
@@ -678,6 +884,19 @@ export function DataEntryForm() {
                       name="city"
                       value={formData.city}
                       onChange={handleChange}
+                      onCompositionStart={() => setIsCityComposing(true)}
+                      onCompositionEnd={() => setIsCityComposing(false)}
+                      onKeyDown={(e) =>
+                        handleSuggestionKeyDown(
+                          e,
+                          "city",
+                          isCitySuggestionVisible,
+                          citySuggestions.length,
+                          setIsCitySuggestionVisible,
+                          (index) => applyCitySuggestion(citySuggestions[index]),
+                          setIsCitySuggestionVisible
+                        )
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="市区町村を入力"
                     />
@@ -698,7 +917,17 @@ export function DataEntryForm() {
                                 key={`city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`}
                                 type="button"
                                 onClick={() => applyCitySuggestion(suggestion)}
-                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                                onMouseEnter={() =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    city: index,
+                                  }))
+                                }
+                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
+                                  activeSuggestionIndex.city === index
+                                    ? "bg-blue-100"
+                                    : "hover:bg-blue-50"
+                                }`}
                               >
                                 {joinWithFullWidthSpace([
                                   suggestion.prefecture,
@@ -715,9 +944,12 @@ export function DataEntryForm() {
                   {/* 町域 */}
                   <div
                     className="relative"
-                    onFocusCapture={() => setIsTownSuggestionVisible(true)}
+                    onFocusCapture={() => {
+                      setIsTownSuggestionVisible(true);
+                      resetSuggestionFocus("town");
+                    }}
                     onBlurCapture={(e) =>
-                      handleSuggestionAreaBlur(e, setIsTownSuggestionVisible)
+                      handleSuggestionAreaBlur(e, setIsTownSuggestionVisible, "town")
                     }
                   >
                     <label className="block text-sm text-gray-700 mb-1.5">
@@ -728,6 +960,19 @@ export function DataEntryForm() {
                       name="town"
                       value={formData.town}
                       onChange={handleChange}
+                      onCompositionStart={() => setIsTownComposing(true)}
+                      onCompositionEnd={() => setIsTownComposing(false)}
+                      onKeyDown={(e) =>
+                        handleSuggestionKeyDown(
+                          e,
+                          "town",
+                          isTownSuggestionVisible,
+                          townSuggestions.length,
+                          setIsTownSuggestionVisible,
+                          (index) => applyAddressSuggestion(townSuggestions[index]),
+                          setIsTownSuggestionVisible
+                        )
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="町域を入力"
                     />
@@ -748,7 +993,17 @@ export function DataEntryForm() {
                                 key={`town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
                                 type="button"
                                 onClick={() => applyAddressSuggestion(suggestion)}
-                                className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm text-gray-700"
+                                onMouseEnter={() =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    town: index,
+                                  }))
+                                }
+                                className={`w-full text-left px-3 py-2 transition-colors text-sm text-gray-700 ${
+                                  activeSuggestionIndex.town === index
+                                    ? "bg-blue-100"
+                                    : "hover:bg-blue-50"
+                                }`}
                               >
                                 {joinWithFullWidthSpace([
                                   suggestion.prefecture,

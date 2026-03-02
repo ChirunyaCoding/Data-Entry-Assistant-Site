@@ -1,7 +1,8 @@
 import {
   buildQueryTokens,
   matchesWithTokens,
-  normalizeAscii,
+  romajiIncludes,
+  romajiStartsWith,
   toKatakana,
   type MatchQueryTokens,
 } from "./japaneseTextSearch.ts";
@@ -17,11 +18,10 @@ const getSuggestionPriority = (
   tokens: MatchQueryTokens
 ): number => {
   if (tokens.romaji) {
-    const normalizedRomaji = normalizeAscii(target.romaji);
-    if (normalizedRomaji.startsWith(tokens.romaji)) {
+    if (romajiStartsWith(target.romaji, tokens.romaji)) {
       return 0;
     }
-    if (tokens.romaji.length >= 2 && normalizedRomaji.includes(tokens.romaji)) {
+    if (tokens.romaji.length >= 2 && romajiIncludes(target.romaji, tokens.romaji)) {
       return 1;
     }
   }

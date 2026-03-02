@@ -116,8 +116,71 @@ const HIRAGANA_TO_ROMAJI: Record<string, string> = {
 
 const ROMAJI_CACHE = new Map<string, string>();
 
+const ROMAJI_VARIANT_RULES: Array<readonly [RegExp, string]> = [
+  [/sha/g, "sya"],
+  [/shu/g, "syu"],
+  [/sho/g, "syo"],
+  [/cha/g, "tya"],
+  [/chu/g, "tyu"],
+  [/cho/g, "tyo"],
+  [/shi/g, "si"],
+  [/chi/g, "ti"],
+  [/tsu/g, "tu"],
+  [/fu/g, "hu"],
+  [/ja/g, "zya"],
+  [/ju/g, "zyu"],
+  [/jo/g, "zyo"],
+  [/ji/g, "zi"],
+];
+
 export const normalizeAscii = (value: string): string => {
   return value.normalize("NFKC").toLowerCase().replace(/[^a-z]/g, "");
+};
+
+export const normalizeRomajiForMatch = (value: string): string => {
+  let normalized = normalizeAscii(value);
+  for (const [pattern, replacement] of ROMAJI_VARIANT_RULES) {
+    normalized = normalized.replace(pattern, replacement);
+  }
+  return normalized;
+};
+
+export const romajiStartsWith = (
+  targetRomaji: string,
+  queryRomaji: string
+): boolean => {
+  const target = normalizeAscii(targetRomaji);
+  const query = normalizeAscii(queryRomaji);
+
+  if (!target || !query) {
+    return false;
+  }
+
+  if (target.startsWith(query)) {
+    return true;
+  }
+
+  return normalizeRomajiForMatch(target).startsWith(
+    normalizeRomajiForMatch(query)
+  );
+};
+
+export const romajiIncludes = (
+  targetRomaji: string,
+  queryRomaji: string
+): boolean => {
+  const target = normalizeAscii(targetRomaji);
+  const query = normalizeAscii(queryRomaji);
+
+  if (!target || !query) {
+    return false;
+  }
+
+  if (target.includes(query)) {
+    return true;
+  }
+
+  return normalizeRomajiForMatch(target).includes(normalizeRomajiForMatch(query));
 };
 
 export const toKatakana = (value: string): string => {
@@ -226,14 +289,8 @@ export const matchesWithTokens = (
   if (!tokens.romaji) {
     return false;
   }
-
-  const romajiTarget = normalizeAscii(target.romaji ?? "");
-  if (!romajiTarget) {
-    return false;
-  }
-
   return (
-    romajiTarget.startsWith(tokens.romaji) ||
-    (tokens.romaji.length >= 2 && romajiTarget.includes(tokens.romaji))
+    romajiStartsWith(target.romaji ?? "", tokens.romaji) ||
+    (tokens.romaji.length >= 2 && romajiIncludes(target.romaji ?? "", tokens.romaji))
   );
 };
