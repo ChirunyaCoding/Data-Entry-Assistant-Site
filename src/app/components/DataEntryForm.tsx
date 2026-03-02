@@ -454,7 +454,33 @@ const VirtualSuggestionList = ({
 };
 
 const normalizeSheetUrl = (rawUrl: string): string => {
-  return rawUrl.trim();
+  const trimmedUrl = rawUrl.trim();
+  if (!trimmedUrl) {
+    return "";
+  }
+
+  try {
+    const parsedUrl = new URL(trimmedUrl);
+    const isGoogleSheet = parsedUrl.hostname === "docs.google.com";
+    if (!isGoogleSheet || !parsedUrl.pathname.includes("/spreadsheets/")) {
+      return trimmedUrl;
+    }
+
+    parsedUrl.searchParams.delete("rm");
+
+    if (!parsedUrl.pathname.includes("/edit")) {
+      parsedUrl.pathname = parsedUrl.pathname
+        .replace(/\/(pubhtml|preview|htmlview)(\/)?$/, "/edit")
+        .replace(/\/$/, "");
+      if (!parsedUrl.pathname.includes("/edit")) {
+        parsedUrl.pathname = `${parsedUrl.pathname}/edit`;
+      }
+    }
+
+    return parsedUrl.toString();
+  } catch {
+    return trimmedUrl;
+  }
 };
 
 export function DataEntryForm() {
@@ -3056,30 +3082,12 @@ export function DataEntryForm() {
                     className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   />
                 </div>
-                {sheetEmbedUrl ? (
-                  <a
-                    href={sheetEmbedUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-2 rounded border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 whitespace-nowrap"
-                  >
-                    別タブで編集
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    className="px-3 py-2 rounded border border-gray-200 text-sm text-gray-400 bg-gray-50 whitespace-nowrap cursor-not-allowed"
-                  >
-                    別タブで編集
-                  </button>
-                )}
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 ※ スプレッドシートを「リンクを知っている全員」に共有設定してください
               </p>
               <p className="text-xs text-gray-500">
-                ※ 編集するには編集権限付きURLを使用してください
+                ※ 編集にはGoogle側で編集権限が必要です（URLは /edit 形式を推奨）
               </p>
             </div>
           )}
