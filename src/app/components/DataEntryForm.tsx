@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Save, Upload, FileText, User, Trash2, Table2, Link, FileUser, Copy, ChevronDown, Settings } from "lucide-react";
+import {
+  Save,
+  Upload,
+  FileText,
+  User,
+  Trash2,
+  Table2,
+  Link,
+  FileUser,
+  Copy,
+  ChevronDown,
+  Settings,
+  X,
+} from "lucide-react";
 import {
   type KenAllAddress,
   loadKenAllData,
@@ -174,6 +187,47 @@ const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
   }
 
   return splitByPattern(digits, [3, 4, 4]);
+};
+
+const sanitizeTownValue = (rawValue: string): string => {
+  return rawValue
+    .replace(/以下に掲載がない場合/g, "")
+    .replace(/[（(][^）)]*[）)]/g, "")
+    .trim();
+};
+
+const COMPANY_SHORTCUT_MAP: Record<string, string> = {
+  yu: "有限会社",
+  ゆ: "有限会社",
+  ka: "株式会社",
+  か: "株式会社",
+  go: "合同会社",
+  gou: "合同会社",
+  godo: "合同会社",
+  goudou: "合同会社",
+  ご: "合同会社",
+  ごう: "合同会社",
+  shi: "合資会社",
+  si: "合資会社",
+  し: "合資会社",
+  goshi: "合資会社",
+  goushi: "合資会社",
+  ごうし: "合資会社",
+  me: "合名会社",
+  mei: "合名会社",
+  め: "合名会社",
+  めい: "合名会社",
+  gomei: "合名会社",
+  goumei: "合名会社",
+  ごうめい: "合名会社",
+};
+
+const expandCompanyShortcut = (rawValue: string): string => {
+  const key = rawValue.normalize("NFKC").trim().toLowerCase();
+  if (!key) {
+    return rawValue;
+  }
+  return COMPANY_SHORTCUT_MAP[key] ?? rawValue;
 };
 
 export function DataEntryForm() {
@@ -435,6 +489,25 @@ export function DataEntryForm() {
       return;
     }
 
+    if (name === "town") {
+      const sanitizedTown = sanitizeTownValue(value);
+      setActiveSuggestionIndex((prev) => ({ ...prev, town: -1 }));
+      setIsTownSuggestionVisible(sanitizedTown.trim().length > 0);
+      setFormData((prev) => ({
+        ...prev,
+        town: sanitizedTown,
+      }));
+      return;
+    }
+
+    if (name === "company") {
+      setFormData((prev) => ({
+        ...prev,
+        company: expandCompanyShortcut(value),
+      }));
+      return;
+    }
+
     if (name === "prefecture") {
       setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
       setIsPrefectureSuggestionVisible(value.trim().length > 0);
@@ -443,11 +516,6 @@ export function DataEntryForm() {
       setActiveSuggestionIndex((prev) => ({ ...prev, city: -1 }));
       setIsCitySuggestionVisible(value.trim().length > 0);
     }
-    if (name === "town") {
-      setActiveSuggestionIndex((prev) => ({ ...prev, town: -1 }));
-      setIsTownSuggestionVisible(value.trim().length > 0);
-    }
-
     setFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -567,7 +635,7 @@ export function DataEntryForm() {
       postalCode: formatPostalCode(address.postalCode),
       prefecture: address.prefecture,
       city: address.city,
-      town: address.town,
+      town: sanitizeTownValue(address.town),
     }));
     setIsPostalSuggestionVisible(false);
     setIsPrefectureSuggestionVisible(false);
@@ -868,7 +936,7 @@ export function DataEntryForm() {
             </div>
             <button
               type="button"
-              onClick={() => setIsSettingsOpen((prev) => !prev)}
+              onClick={() => setIsSettingsOpen(true)}
               className="px-3 py-2 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 flex items-center gap-2 text-sm"
             >
               <Settings className="w-4 h-4" />
@@ -901,45 +969,6 @@ export function DataEntryForm() {
               住民票モード
             </button>
           </div>
-
-          {isSettingsOpen && (
-            <div className="mb-6 p-4 rounded border border-gray-200 bg-gray-50 space-y-3">
-              <h2 className="text-sm font-semibold text-gray-800">設定</h2>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={settings.isOperatorFixed}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      isOperatorFixed: e.target.checked,
-                    }))
-                  }
-                />
-                入力者名を固定する
-              </label>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  固定する入力者名
-                </label>
-                <input
-                  type="text"
-                  value={settings.fixedOperatorName}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      fixedOperatorName: e.target.value,
-                    }))
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例: 田中 太郎"
-                />
-              </div>
-              <p className="text-xs text-gray-500">
-                電話番号は通常入力で携帯形式、Shiftキーを押して入力すると固定電話形式になります。
-              </p>
-            </div>
-          )}
 
           {mode === "basic" ? (
             // 基本モード
@@ -2094,6 +2123,66 @@ export function DataEntryForm() {
           )}
         </div>
       </div>
+
+      {isSettingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setIsSettingsOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="設定"
+            className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-gray-800">設定</h2>
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-2 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                aria-label="設定を閉じる"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={settings.isOperatorFixed}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isOperatorFixed: e.target.checked,
+                  }))
+                }
+              />
+              入力者名を固定する
+            </label>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                固定する入力者名
+              </label>
+              <input
+                type="text"
+                value={settings.fixedOperatorName}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    fixedOperatorName: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="例: 田中 太郎"
+              />
+            </div>
+            <p className="text-xs text-gray-500">
+              電話番号は通常入力で携帯形式、Shiftキーを押して入力すると固定電話形式になります。
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
