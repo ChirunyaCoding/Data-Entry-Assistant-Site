@@ -189,6 +189,19 @@ const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
   return splitByPattern(digits, [3, 4, 4]);
 };
 
+const SHIFTED_NUMBER_TO_DIGIT_MAP: Record<string, string> = {
+  "!": "1",
+  "@": "2",
+  "#": "3",
+  $: "4",
+  "%": "5",
+  "^": "6",
+  "&": "7",
+  "*": "8",
+  "(": "9",
+  ")": "0",
+};
+
 const sanitizeTownValue = (rawValue: string): string => {
   return rawValue
     .replace(/以下に掲載がない場合/g, "")
@@ -300,6 +313,21 @@ export function DataEntryForm() {
   const [isCityComposing, setIsCityComposing] = useState(false);
   const [isTownComposing, setIsTownComposing] = useState(false);
   const basicFormRef = useRef<HTMLDivElement>(null);
+
+  const prefectureCandidates = useMemo(() => {
+    const uniquePrefectureCandidatesMap = new Map<string, PrefectureCandidate>();
+    for (const address of kenAllAddresses) {
+      if (uniquePrefectureCandidatesMap.has(address.prefecture)) {
+        continue;
+      }
+      uniquePrefectureCandidatesMap.set(address.prefecture, {
+        prefecture: address.prefecture,
+        prefectureKana: address.prefectureKana,
+        prefectureRomaji: address.prefectureRomaji,
+      });
+    }
+    return Array.from(uniquePrefectureCandidatesMap.values());
+  }, [kenAllAddresses]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -428,29 +456,11 @@ export function DataEntryForm() {
       return [];
     }
 
-    const uniquePrefectureCandidatesMap = new Map<string, PrefectureCandidate>();
-    for (const address of kenAllAddresses) {
-      if (uniquePrefectureCandidatesMap.has(address.prefecture)) {
-        continue;
-      }
-      uniquePrefectureCandidatesMap.set(address.prefecture, {
-        prefecture: address.prefecture,
-        prefectureKana: address.prefectureKana,
-        prefectureRomaji: address.prefectureRomaji,
-      });
-    }
-
-    const uniquePrefectureCandidates = Array.from(
-      uniquePrefectureCandidatesMap.values()
-    );
-
-    return findPrefectureSuggestions(uniquePrefectureCandidates, prefecture);
+    return findPrefectureSuggestions(prefectureCandidates, prefecture);
   }, [
     formData.prefecture,
-    formData.city,
-    formData.town,
     isPrefectureComposing,
-    kenAllAddresses,
+    prefectureCandidates,
   ]);
 
   // 郵便番号入力向けの候補
@@ -1483,7 +1493,27 @@ export function DataEntryForm() {
                       onKeyDown={(e) => {
                         if (e.key === "Shift") {
                           setPhoneInputMode("landline");
+                          return;
                         }
+
+                        if (!e.shiftKey) {
+                          return;
+                        }
+
+                        const mappedDigit = SHIFTED_NUMBER_TO_DIGIT_MAP[e.key];
+                        if (!mappedDigit) {
+                          return;
+                        }
+
+                        e.preventDefault();
+                        setPhoneInputMode("landline");
+                        setFormData((prev) => ({
+                          ...prev,
+                          phone: formatPhoneNumber(
+                            `${prev.phone}${mappedDigit}`,
+                            "landline"
+                          ),
+                        }));
                       }}
                       className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="000-0000-0000"

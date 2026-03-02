@@ -11,6 +11,12 @@ import {
 interface AddressSuggestionIndex {
   cityCandidates: KenAllAddress[];
   townCandidates: KenAllAddress[];
+  cityByKanjiChar: Map<string, KenAllAddress[]>;
+  cityByKanaChar: Map<string, KenAllAddress[]>;
+  cityByRomajiChar: Map<string, KenAllAddress[]>;
+  townByKanjiChar: Map<string, KenAllAddress[]>;
+  townByKanaChar: Map<string, KenAllAddress[]>;
+  townByRomajiChar: Map<string, KenAllAddress[]>;
 }
 
 const ADDRESS_INDEX_CACHE = new WeakMap<KenAllAddress[], AddressSuggestionIndex>();
@@ -27,22 +33,77 @@ const getAddressSuggestionIndex = (
   const townSeen = new Set<string>();
   const cityCandidates: KenAllAddress[] = [];
   const townCandidates: KenAllAddress[] = [];
+  const cityByKanjiChar = new Map<string, KenAllAddress[]>();
+  const cityByKanaChar = new Map<string, KenAllAddress[]>();
+  const cityByRomajiChar = new Map<string, KenAllAddress[]>();
+  const townByKanjiChar = new Map<string, KenAllAddress[]>();
+  const townByKanaChar = new Map<string, KenAllAddress[]>();
+  const townByRomajiChar = new Map<string, KenAllAddress[]>();
+
+  const pushToMap = (
+    map: Map<string, KenAllAddress[]>,
+    key: string,
+    item: KenAllAddress
+  ) => {
+    if (!key) {
+      return;
+    }
+    const bucket = map.get(key);
+    if (bucket) {
+      bucket.push(item);
+      return;
+    }
+    map.set(key, [item]);
+  };
+
+  const pushCharsToMap = (
+    map: Map<string, KenAllAddress[]>,
+    text: string,
+    item: KenAllAddress
+  ) => {
+    if (!text) {
+      return;
+    }
+    const seen = new Set<string>();
+    for (const char of text) {
+      if (seen.has(char)) {
+        continue;
+      }
+      seen.add(char);
+      pushToMap(map, char, item);
+    }
+  };
 
   for (const address of addresses) {
     const cityKey = `${address.prefecture}|${address.city}`;
     if (!citySeen.has(cityKey)) {
       citySeen.add(cityKey);
       cityCandidates.push(address);
+      pushCharsToMap(cityByKanjiChar, address.city, address);
+      pushCharsToMap(cityByKanaChar, address.cityKana, address);
+      pushCharsToMap(cityByRomajiChar, address.cityRomaji, address);
     }
 
     const townKey = `${address.prefecture}|${address.city}|${address.town}`;
     if (!townSeen.has(townKey)) {
       townSeen.add(townKey);
       townCandidates.push(address);
+      pushCharsToMap(townByKanjiChar, address.town, address);
+      pushCharsToMap(townByKanaChar, address.townKana, address);
+      pushCharsToMap(townByRomajiChar, address.townRomaji, address);
     }
   }
 
-  const index = { cityCandidates, townCandidates };
+  const index = {
+    cityCandidates,
+    townCandidates,
+    cityByKanjiChar,
+    cityByKanaChar,
+    cityByRomajiChar,
+    townByKanjiChar,
+    townByKanaChar,
+    townByRomajiChar,
+  };
   ADDRESS_INDEX_CACHE.set(addresses, index);
   return index;
 };
@@ -50,6 +111,27 @@ const getAddressSuggestionIndex = (
 const isSingleAsciiLetterQuery = (value: string): boolean => {
   const normalized = value.trim().normalize("NFKC");
   return /^[a-z]$/i.test(normalized);
+};
+
+const narrowCandidatesByChar = (
+  fallbackCandidates: KenAllAddress[],
+  tokens: MatchQueryTokens,
+  charMaps: {
+    kanji: Map<string, KenAllAddress[]>;
+    kana: Map<string, KenAllAddress[]>;
+    romaji: Map<string, KenAllAddress[]>;
+  }
+): KenAllAddress[] => {
+  if (tokens.romaji) {
+    return charMaps.romaji.get(tokens.romaji.slice(0, 1)) ?? [];
+  }
+  if (tokens.kana) {
+    return charMaps.kana.get(tokens.kana.slice(0, 1)) ?? [];
+  }
+  if (tokens.raw) {
+    return charMaps.kanji.get(tokens.raw.slice(0, 1)) ?? [];
+  }
+  return fallbackCandidates;
 };
 
 const uniqueBy = <T,>(items: T[], keyResolver: (item: T) => string): T[] => {
@@ -115,10 +197,20 @@ export const findCitySuggestions = (
     return [];
   }
 
-  const { cityCandidates } = getAddressSuggestionIndex(addresses);
+  const {
+    cityCandidates,
+    cityByKanjiChar,
+    cityByKanaChar,
+    cityByRomajiChar,
+  } = getAddressSuggestionIndex(addresses);
+  const baseCandidates = narrowCandidatesByChar(cityCandidates, cityQueryTokens, {
+    kanji: cityByKanjiChar,
+    kana: cityByKanaChar,
+    romaji: cityByRomajiChar,
+  });
   const prefectureQueryTokens = buildQueryTokens(prefecture);
 
-  const filtered = cityCandidates.filter((address) => {
+  const filtered = baseCandidates.filter((address) => {
     if (
       prefecture &&
       !matchesWithTokens(
@@ -192,10 +284,20 @@ export const findTownSuggestions = (
     return [];
   }
 
-  const { townCandidates } = getAddressSuggestionIndex(addresses);
+  const {
+    townCandidates,
+    townByKanjiChar,
+    townByKanaChar,
+    townByRomajiChar,
+  } = getAddressSuggestionIndex(addresses);
+  const baseCandidates = narrowCandidatesByChar(townCandidates, townQueryTokens, {
+    kanji: townByKanjiChar,
+    kana: townByKanaChar,
+    romaji: townByRomajiChar,
+  });
   const prefectureQueryTokens = buildQueryTokens(prefecture);
 
-  const filtered = townCandidates.filter((address) => {
+  const filtered = baseCandidates.filter((address) => {
     if (
       prefecture &&
       !matchesWithTokens(
