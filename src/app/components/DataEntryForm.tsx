@@ -1,5 +1,10 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Save, Upload, FileText, User, Trash2, Table2, Link, FileUser, Copy, ChevronDown } from "lucide-react";
+import {
+  type KenAllAddress,
+  loadKenAllData,
+  searchKenAllAddresses,
+} from "../lib/kenAll";
 
 interface FormData {
   operator: string;
@@ -53,6 +58,22 @@ interface SavedResidentEntry extends ResidentFormData {
   savedAt: string;
 }
 
+const dedupeAddresses = (addresses: KenAllAddress[]) => {
+  const seen = new Set<string>();
+  const unique: KenAllAddress[] = [];
+
+  for (const address of addresses) {
+    const key = `${address.prefecture}|${address.city}|${address.town}|${address.postalCode}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(address);
+  }
+
+  return unique;
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
@@ -101,6 +122,68 @@ export function DataEntryForm() {
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet">("pdf");
   const [sheetUrl, setSheetUrl] = useState<string>("");
+  const [kenAllAddresses, setKenAllAddresses] = useState<KenAllAddress[]>([]);
+  const [isKenAllLoading, setIsKenAllLoading] = useState(false);
+  const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchKenAll = async () => {
+      setIsKenAllLoading(true);
+      setKenAllLoadError(null);
+
+      try {
+        const loadedAddresses = await loadKenAllData();
+        if (!isCancelled) {
+          setKenAllAddresses(loadedAddresses);
+        }
+      } catch {
+        if (!isCancelled) {
+          setKenAllLoadError("住所マスタの読み込みに失敗しました");
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsKenAllLoading(false);
+        }
+      }
+    };
+
+    fetchKenAll();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  // 基本モード（都道府県・市区町村・町域）入力向けの候補
+  const addressSuggestions = useMemo(() => {
+    return dedupeAddresses(
+      searchKenAllAddresses(
+        kenAllAddresses,
+        {
+          prefecture: formData.prefecture,
+          city: formData.city,
+          town: formData.town,
+        },
+        10
+      )
+    );
+  }, [formData.prefecture, formData.city, formData.town, kenAllAddresses]);
+
+  // 郵便番号入力向けの候補
+  const postalCodeSuggestions = useMemo(() => {
+    const normalizedPostalCode = formData.postalCode.replace(/[^\d]/g, "");
+    if (!normalizedPostalCode) {
+      return [];
+    }
+
+    return dedupeAddresses(
+      kenAllAddresses
+        .filter((address) => address.postalCode.startsWith(normalizedPostalCode))
+        .slice(0, 10)
+    );
+  }, [formData.postalCode, kenAllAddresses]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -109,6 +192,16 @@ export function DataEntryForm() {
     setFormData((prev) => ({
       ...prev,
       [name]: value,
+    }));
+  };
+
+  const applyAddressSuggestion = (address: KenAllAddress) => {
+    setFormData((prev) => ({
+      ...prev,
+      postalCode: address.postalCode,
+      prefecture: address.prefecture,
+      city: address.city,
+      town: address.town,
     }));
   };
 
@@ -401,10 +494,31 @@ export function DataEntryForm() {
                 {formData.postalCode && (
                   <div className="bg-blue-50 border border-blue-200 rounded p-3">
                     <div className="text-xs text-blue-700 mb-1">住所補完候補</div>
-                    <div className="text-sm text-gray-700">
-                      {/* ここに補完候補が表示されます（未実装） */}
-                      <span className="text-gray-400 italic">補完機能は未実装です</span>
-                    </div>
+                    {isKenAllLoading ? (
+                      <div className="text-sm text-gray-600">住所マスタを読み込み中です...</div>
+                    ) : kenAllLoadError ? (
+                      <div className="text-sm text-red-600">{kenAllLoadError}</div>
+                    ) : postalCodeSuggestions.length === 0 ? (
+                      <div className="text-sm text-gray-500">該当する候補がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {postalCodeSuggestions.map((suggestion, index) => (
+                          <button
+                            key={`postal-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
+                            type="button"
+                            onClick={() => applyAddressSuggestion(suggestion)}
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
+                          >
+                            <span className="font-mono text-xs text-gray-500 mr-2">
+                              {suggestion.postalCode}
+                            </span>
+                            {suggestion.prefecture}
+                            {suggestion.city}
+                            {suggestion.town || "（町域なし）"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -460,9 +574,31 @@ export function DataEntryForm() {
                 {(formData.prefecture || formData.city || formData.town) && (
                   <div className="bg-blue-50 border border-blue-200 rounded p-3">
                     <div className="text-xs text-blue-700 mb-1">住所補完候補</div>
-                    <div className="text-sm text-gray-700">
-                      <span className="text-gray-400 italic">補完機能は未実装です</span>
-                    </div>
+                    {isKenAllLoading ? (
+                      <div className="text-sm text-gray-600">住所マスタを読み込み中です...</div>
+                    ) : kenAllLoadError ? (
+                      <div className="text-sm text-red-600">{kenAllLoadError}</div>
+                    ) : addressSuggestions.length === 0 ? (
+                      <div className="text-sm text-gray-500">該当する候補がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {addressSuggestions.map((suggestion, index) => (
+                          <button
+                            key={`address-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`}
+                            type="button"
+                            onClick={() => applyAddressSuggestion(suggestion)}
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-100 transition-colors text-sm text-gray-700"
+                          >
+                            <span className="font-mono text-xs text-gray-500 mr-2">
+                              {suggestion.postalCode}
+                            </span>
+                            {suggestion.prefecture}
+                            {suggestion.city}
+                            {suggestion.town || "（町域なし）"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
