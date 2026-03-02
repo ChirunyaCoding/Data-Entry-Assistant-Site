@@ -118,6 +118,7 @@ const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
 };
 
 const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
+const SHEET_URL_STORAGE_KEY = "data-entry-tool.sheet-url.v1";
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 
 const BASIC_FIELD_ORDER = [
@@ -549,7 +550,17 @@ export function DataEntryForm() {
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
-  const [sheetUrl, setSheetUrl] = useState<string>("");
+  const [sheetUrl, setSheetUrl] = useState<string>(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    try {
+      return window.localStorage.getItem(SHEET_URL_STORAGE_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const sheetEmbedUrl = normalizeSheetUrl(sheetUrl);
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
@@ -721,6 +732,14 @@ export function DataEntryForm() {
   useEffect(() => {
     window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHEET_URL_STORAGE_KEY, sheetUrl);
+    } catch {
+      // 保存に失敗した場合はメモリ上の値を使う
+    }
+  }, [sheetUrl]);
 
   useEffect(() => {
     if (!settings.isOperatorFixed) {
