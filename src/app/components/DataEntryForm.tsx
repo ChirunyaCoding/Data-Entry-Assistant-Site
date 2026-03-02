@@ -870,17 +870,13 @@ export function DataEntryForm() {
     selectByIndex: (index: number) => void,
     hide: React.Dispatch<React.SetStateAction<boolean>>
   ) => {
-    const isSuggestionShortcut = e.ctrlKey;
-
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (!isSuggestionShortcut) {
+      if (!isVisible || count === 0) {
         return;
       }
       show(true);
-      if (count === 0) {
-        return;
-      }
       e.preventDefault();
+      e.stopPropagation();
       if (!isVisible || activeSuggestionIndex[type] < 0) {
         setActiveSuggestionIndex((prev) => ({
           ...prev,
@@ -893,20 +889,15 @@ export function DataEntryForm() {
     }
 
     if (e.key === "Enter") {
-      if (!isSuggestionShortcut) {
-        return;
-      }
       if (!isVisible || count === 0) {
         return;
       }
-      const index = activeSuggestionIndex[type];
-      if (index < 0) {
-        return;
-      }
+      const index = activeSuggestionIndex[type] < 0 ? 0 : activeSuggestionIndex[type];
       if (index >= count) {
         return;
       }
       e.preventDefault();
+      e.stopPropagation();
       selectByIndex(index);
       hide(false);
       resetSuggestionFocus(type);
@@ -1515,7 +1506,7 @@ export function DataEntryForm() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-500">
-                  補完候補をキーボードで選ぶ場合は Ctrl+↓/Ctrl+↑/Ctrl+Enter を使用します。
+                  補完候補は ↑/↓ で移動し、Enter で選択できます。
                 </p>
 
                 {/* 3列レイアウト - 大字、字、小字 */}
