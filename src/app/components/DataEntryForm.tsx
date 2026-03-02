@@ -283,6 +283,42 @@ const sanitizeTownValue = (rawValue: string): string => {
     .trim();
 };
 
+const toFullWidthDigits = (rawValue: string): string => {
+  return rawValue.replace(/[0-9]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) + 0xfee0)
+  );
+};
+
+const toHalfWidthDigits = (rawValue: string): string => {
+  return rawValue.replace(/[０-９]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) - 0xfee0)
+  );
+};
+
+const toFullWidthAlphabet = (rawValue: string): string => {
+  return rawValue.replace(/[A-Za-z]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) + 0xfee0)
+  );
+};
+
+const formatBanchiValue = (rawValue: string): string => {
+  const normalized = rawValue.normalize("NFKC").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const numbers = normalized.match(/\d+/g);
+  if (!numbers) {
+    return normalized;
+  }
+
+  return numbers.map((part) => toFullWidthDigits(part)).join("ー");
+};
+
+const normalizeBuildingValue = (rawValue: string): string => {
+  return toFullWidthAlphabet(toHalfWidthDigits(rawValue));
+};
+
 const COMPANY_SHORTCUT_MAP: Record<string, string> = {
   yu: "有限会社",
   ゆ: "有限会社",
@@ -802,6 +838,22 @@ export function DataEntryForm() {
       return;
     }
 
+    if (name === "banchi") {
+      setFormData((prev) => ({
+        ...prev,
+        banchi: formatBanchiValue(value),
+      }));
+      return;
+    }
+
+    if (name === "building") {
+      setFormData((prev) => ({
+        ...prev,
+        building: normalizeBuildingValue(value),
+      }));
+      return;
+    }
+
     if (name === "prefecture") {
       setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
       setIsPrefectureSuggestionVisible(value.trim().length > 0);
@@ -1149,6 +1201,22 @@ export function DataEntryForm() {
     if (name === "departCity" || name === "registryCity") {
       setActiveSuggestionIndex((prev) => ({ ...prev, city: -1 }));
       setIsCitySuggestionVisible(value.trim().length > 0);
+    }
+
+    if (name === "departBanchi" || name === "registryBanchi") {
+      setResidentFormData((prev) => ({
+        ...prev,
+        [name]: formatBanchiValue(value),
+      }));
+      return;
+    }
+
+    if (name === "departBuilding" || name === "registryBuilding") {
+      setResidentFormData((prev) => ({
+        ...prev,
+        [name]: normalizeBuildingValue(value),
+      }));
+      return;
     }
 
     setResidentFormData((prev) => ({
