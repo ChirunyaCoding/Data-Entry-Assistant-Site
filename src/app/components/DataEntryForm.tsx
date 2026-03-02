@@ -77,6 +77,9 @@ const joinWithFullWidthSpace = (parts: string[]) => {
 };
 
 type SuggestionType = "postal" | "prefecture" | "city" | "town";
+type ResidentSection = "depart" | "registry";
+type AddressSuggestionTarget = "basic" | ResidentSection;
+type AddressSuggestionType = Exclude<SuggestionType, "postal">;
 
 type WorkerRequest =
   | { type: "init" }
@@ -136,6 +139,69 @@ const BASIC_FIELD_ORDER = [
 ] as const;
 
 const DETAIL_ADDRESS_FIELDS = new Set<string>(["ooaza", "aza", "koaza"]);
+const RESIDENT_FIELD_ORDER = [
+  "departName",
+  "departPrefecture",
+  "departCity",
+  "departTown",
+  "departOoaza",
+  "departAza",
+  "departKoaza",
+  "departBanchi",
+  "departBuilding",
+  "registryName",
+  "registryPrefecture",
+  "registryCity",
+  "registryTown",
+  "registryOoaza",
+  "registryAza",
+  "registryKoaza",
+  "registryBanchi",
+  "registryBuilding",
+] as const;
+const RESIDENT_DETAIL_ADDRESS_FIELDS = new Set<string>([
+  "departOoaza",
+  "departAza",
+  "departKoaza",
+  "registryOoaza",
+  "registryAza",
+  "registryKoaza",
+]);
+
+const getResidentSectionFromFieldName = (
+  fieldName: string
+): ResidentSection | null => {
+  if (fieldName.startsWith("depart")) {
+    return "depart";
+  }
+  if (fieldName.startsWith("registry")) {
+    return "registry";
+  }
+  return null;
+};
+
+const getResidentAddressFieldName = (
+  section: ResidentSection,
+  type: AddressSuggestionType
+): keyof ResidentFormData => {
+  if (section === "depart") {
+    if (type === "prefecture") {
+      return "departPrefecture";
+    }
+    if (type === "city") {
+      return "departCity";
+    }
+    return "departTown";
+  }
+
+  if (type === "prefecture") {
+    return "registryPrefecture";
+  }
+  if (type === "city") {
+    return "registryCity";
+  }
+  return "registryTown";
+};
 
 type PhoneInputMode = "mobile" | "landline";
 
@@ -420,10 +486,27 @@ export function DataEntryForm() {
     SuggestionType,
     number
   >>(INITIAL_ACTIVE_SUGGESTION_INDEX);
+  const [residentActiveSection, setResidentActiveSection] =
+    useState<ResidentSection>("depart");
   const [isPrefectureComposing, setIsPrefectureComposing] = useState(false);
   const [isCityComposing, setIsCityComposing] = useState(false);
   const [isTownComposing, setIsTownComposing] = useState(false);
+  const [residentComposing, setResidentComposing] = useState<
+    Record<ResidentSection, Record<AddressSuggestionType, boolean>>
+  >({
+    depart: {
+      prefecture: false,
+      city: false,
+      town: false,
+    },
+    registry: {
+      prefecture: false,
+      city: false,
+      town: false,
+    },
+  });
   const basicFormRef = useRef<HTMLDivElement>(null);
+  const residentFormRef = useRef<HTMLDivElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
   const requestSerialRef = useRef(0);
   const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
@@ -433,9 +516,35 @@ export function DataEntryForm() {
     town: 0,
   });
   const deferredPostalCode = useDeferredValue(formData.postalCode);
-  const deferredPrefecture = useDeferredValue(formData.prefecture);
-  const deferredCity = useDeferredValue(formData.city);
-  const deferredTown = useDeferredValue(formData.town);
+  const activePrefectureInput =
+    mode === "basic"
+      ? formData.prefecture
+      : residentFormData[
+          getResidentAddressFieldName(residentActiveSection, "prefecture")
+        ];
+  const activeCityInput =
+    mode === "basic"
+      ? formData.city
+      : residentFormData[getResidentAddressFieldName(residentActiveSection, "city")];
+  const activeTownInput =
+    mode === "basic"
+      ? formData.town
+      : residentFormData[getResidentAddressFieldName(residentActiveSection, "town")];
+  const deferredPrefecture = useDeferredValue(activePrefectureInput);
+  const deferredCity = useDeferredValue(activeCityInput);
+  const deferredTown = useDeferredValue(activeTownInput);
+  const isActivePrefectureComposing =
+    mode === "basic"
+      ? isPrefectureComposing
+      : residentComposing[residentActiveSection].prefecture;
+  const isActiveCityComposing =
+    mode === "basic"
+      ? isCityComposing
+      : residentComposing[residentActiveSection].city;
+  const isActiveTownComposing =
+    mode === "basic"
+      ? isTownComposing
+      : residentComposing[residentActiveSection].town;
 
   useEffect(() => {
     let isDisposed = false;
@@ -582,7 +691,7 @@ export function DataEntryForm() {
   }, [deferredPostalCode, isWorkerReady]);
 
   useEffect(() => {
-    if (!isWorkerReady || isPrefectureComposing) {
+    if (!isWorkerReady || isActivePrefectureComposing) {
       setPrefectureSuggestions([]);
       return;
     }
@@ -597,10 +706,10 @@ export function DataEntryForm() {
       type: "queryPrefecture",
       prefecture,
     });
-  }, [deferredPrefecture, isPrefectureComposing, isWorkerReady]);
+  }, [deferredPrefecture, isActivePrefectureComposing, isWorkerReady]);
 
   useEffect(() => {
-    if (!isWorkerReady || isCityComposing) {
+    if (!isWorkerReady || isActiveCityComposing) {
       setCitySuggestions([]);
       return;
     }
@@ -621,12 +730,12 @@ export function DataEntryForm() {
     deferredPrefecture,
     deferredCity,
     deferredTown,
-    isCityComposing,
+    isActiveCityComposing,
     isWorkerReady,
   ]);
 
   useEffect(() => {
-    if (!isWorkerReady || isTownComposing) {
+    if (!isWorkerReady || isActiveTownComposing) {
       setTownSuggestions([]);
       return;
     }
@@ -647,7 +756,7 @@ export function DataEntryForm() {
     deferredPrefecture,
     deferredCity,
     deferredTown,
-    isTownComposing,
+    isActiveTownComposing,
     isWorkerReady,
   ]);
 
@@ -707,14 +816,14 @@ export function DataEntryForm() {
     }));
   };
 
-  const findNextFieldName = (
+  const findNextFieldNameFromOrder = (
     currentName: string,
     direction: 1 | -1,
-    includeDetailFields: boolean
+    includeDetailFields: boolean,
+    fieldOrder: readonly string[],
+    detailFields: Set<string>
   ): string | null => {
-    const currentIndex = BASIC_FIELD_ORDER.indexOf(
-      currentName as (typeof BASIC_FIELD_ORDER)[number]
-    );
+    const currentIndex = fieldOrder.indexOf(currentName);
 
     if (currentIndex < 0) {
       return null;
@@ -723,12 +832,12 @@ export function DataEntryForm() {
     let cursor = currentIndex;
     while (true) {
       cursor += direction;
-      if (cursor < 0 || cursor >= BASIC_FIELD_ORDER.length) {
+      if (cursor < 0 || cursor >= fieldOrder.length) {
         return null;
       }
 
-      const nextName = BASIC_FIELD_ORDER[cursor];
-      if (!includeDetailFields && DETAIL_ADDRESS_FIELDS.has(nextName)) {
+      const nextName = fieldOrder[cursor];
+      if (!includeDetailFields && detailFields.has(nextName)) {
         continue;
       }
 
@@ -736,8 +845,11 @@ export function DataEntryForm() {
     }
   };
 
-  const focusByFieldName = (fieldName: string) => {
-    const target = basicFormRef.current?.querySelector<
+  const focusByFieldName = (
+    containerRef: React.RefObject<HTMLDivElement>,
+    fieldName: string
+  ) => {
+    const target = containerRef.current?.querySelector<
       HTMLInputElement | HTMLTextAreaElement
     >(`[name="${fieldName}"]`);
     if (!target || target.disabled) {
@@ -749,6 +861,40 @@ export function DataEntryForm() {
       target.select();
     }
     return true;
+  };
+
+  const focusNextField = (
+    currentName: string,
+    direction: 1 | -1,
+    includeDetailFields: boolean
+  ) => {
+    const residentSection = getResidentSectionFromFieldName(currentName);
+    if (residentSection) {
+      const nextResidentField = findNextFieldNameFromOrder(
+        currentName,
+        direction,
+        includeDetailFields,
+        RESIDENT_FIELD_ORDER,
+        RESIDENT_DETAIL_ADDRESS_FIELDS
+      );
+      if (!nextResidentField) {
+        return false;
+      }
+      return focusByFieldName(residentFormRef, nextResidentField);
+    }
+
+    const nextBasicField = findNextFieldNameFromOrder(
+      currentName,
+      direction,
+      includeDetailFields,
+      BASIC_FIELD_ORDER,
+      DETAIL_ADDRESS_FIELDS
+    );
+    if (!nextBasicField) {
+      return false;
+    }
+
+    return focusByFieldName(basicFormRef, nextBasicField);
   };
 
   const handleBasicFormNavigation = (
@@ -772,12 +918,32 @@ export function DataEntryForm() {
     }
 
     const direction: 1 | -1 = e.key === "ArrowUp" ? -1 : 1;
-    const nextFieldName = findNextFieldName(fieldName, direction, e.shiftKey);
-    if (!nextFieldName) {
+    if (focusNextField(fieldName, direction, e.shiftKey)) {
+      e.preventDefault();
+    }
+  };
+
+  const handleResidentFormNavigation = (
+    e: React.KeyboardEvent<HTMLDivElement>
+  ) => {
+    if (e.defaultPrevented) {
       return;
     }
 
-    if (focusByFieldName(nextFieldName)) {
+    const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+    const fieldName = target?.name;
+    if (!fieldName || !getResidentSectionFromFieldName(fieldName)) {
+      return;
+    }
+
+    const isNavigationKey =
+      e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp";
+    if (!isNavigationKey) {
+      return;
+    }
+
+    const direction: 1 | -1 = e.key === "ArrowUp" ? -1 : 1;
+    if (focusNextField(fieldName, direction, e.shiftKey)) {
       e.preventDefault();
     }
   };
@@ -814,14 +980,31 @@ export function DataEntryForm() {
     }));
   };
 
-  const applyAddressSuggestion = (address: KenAllAddress) => {
-    setFormData((prev) => ({
-      ...prev,
-      postalCode: formatPostalCode(address.postalCode),
-      prefecture: address.prefecture,
-      city: address.city,
-      town: sanitizeTownValue(address.town),
-    }));
+  const applyAddressSuggestion = (
+    address: KenAllAddress,
+    target: AddressSuggestionTarget = "basic"
+  ) => {
+    if (target === "basic") {
+      setFormData((prev) => ({
+        ...prev,
+        postalCode: formatPostalCode(address.postalCode),
+        prefecture: address.prefecture,
+        city: address.city,
+        town: sanitizeTownValue(address.town),
+      }));
+    } else {
+      const prefectureField = getResidentAddressFieldName(target, "prefecture");
+      const cityField = getResidentAddressFieldName(target, "city");
+      const townField = getResidentAddressFieldName(target, "town");
+      setResidentFormData((prev) => ({
+        ...prev,
+        [prefectureField]: address.prefecture,
+        [cityField]: address.city,
+        [townField]: sanitizeTownValue(address.town),
+      }));
+      setResidentActiveSection(target);
+    }
+
     setIsPostalSuggestionVisible(false);
     setIsPrefectureSuggestionVisible(false);
     setIsCitySuggestionVisible(false);
@@ -829,21 +1012,47 @@ export function DataEntryForm() {
     setActiveSuggestionIndex(INITIAL_ACTIVE_SUGGESTION_INDEX);
   };
 
-  const applyPrefectureSuggestion = (prefecture: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      prefecture,
-    }));
+  const applyPrefectureSuggestion = (
+    prefecture: string,
+    target: AddressSuggestionTarget = "basic"
+  ) => {
+    if (target === "basic") {
+      setFormData((prev) => ({
+        ...prev,
+        prefecture,
+      }));
+    } else {
+      const prefectureField = getResidentAddressFieldName(target, "prefecture");
+      setResidentFormData((prev) => ({
+        ...prev,
+        [prefectureField]: prefecture,
+      }));
+      setResidentActiveSection(target);
+    }
     setIsPrefectureSuggestionVisible(false);
     resetSuggestionFocus("prefecture");
   };
 
-  const applyCitySuggestion = (address: KenAllAddress) => {
-    setFormData((prev) => ({
-      ...prev,
-      prefecture: address.prefecture,
-      city: address.city,
-    }));
+  const applyCitySuggestion = (
+    address: KenAllAddress,
+    target: AddressSuggestionTarget = "basic"
+  ) => {
+    if (target === "basic") {
+      setFormData((prev) => ({
+        ...prev,
+        prefecture: address.prefecture,
+        city: address.city,
+      }));
+    } else {
+      const prefectureField = getResidentAddressFieldName(target, "prefecture");
+      const cityField = getResidentAddressFieldName(target, "city");
+      setResidentFormData((prev) => ({
+        ...prev,
+        [prefectureField]: address.prefecture,
+        [cityField]: address.city,
+      }));
+      setResidentActiveSection(target);
+    }
     setIsCitySuggestionVisible(false);
     resetSuggestionFocus("city");
   };
@@ -901,6 +1110,7 @@ export function DataEntryForm() {
       selectByIndex(index);
       hide(false);
       resetSuggestionFocus(type);
+      focusNextField(e.currentTarget.name, 1, e.shiftKey);
       return;
     }
 
@@ -914,6 +1124,33 @@ export function DataEntryForm() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
+
+    const residentSection = getResidentSectionFromFieldName(name);
+    if (residentSection) {
+      setResidentActiveSection(residentSection);
+    }
+
+    if (name === "departTown" || name === "registryTown") {
+      const sanitizedTown = sanitizeTownValue(value);
+      setActiveSuggestionIndex((prev) => ({ ...prev, town: -1 }));
+      setIsTownSuggestionVisible(sanitizedTown.trim().length > 0);
+      setResidentFormData((prev) => ({
+        ...prev,
+        [name]: sanitizedTown,
+      }));
+      return;
+    }
+
+    if (name === "departPrefecture" || name === "registryPrefecture") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
+      setIsPrefectureSuggestionVisible(value.trim().length > 0);
+    }
+
+    if (name === "departCity" || name === "registryCity") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, city: -1 }));
+      setIsCitySuggestionVisible(value.trim().length > 0);
+    }
+
     setResidentFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -1798,7 +2035,11 @@ export function DataEntryForm() {
           ) : (
             // 住民票モード
             <>
-              <div className="space-y-4">
+              <div
+                ref={residentFormRef}
+                className="space-y-4"
+                onKeyDown={handleResidentFormNavigation}
+              >
                 {/* 2列レイアウト - 転出と本籍を並列表示 */}
                 <div className="grid grid-cols-2 gap-6">
                   {/* 左列：転出 */}
@@ -1823,7 +2064,21 @@ export function DataEntryForm() {
                     </div>
 
                     {/* 転出都道府県 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("depart");
+                        setIsPrefectureSuggestionVisible(true);
+                        resetSuggestionFocus("prefecture");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(
+                          e,
+                          setIsPrefectureSuggestionVisible,
+                          "prefecture"
+                        )
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         都道府県
                       </label>
@@ -1832,13 +2087,91 @@ export function DataEntryForm() {
                         name="departPrefecture"
                         value={residentFormData.departPrefecture}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, prefecture: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, prefecture: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "prefecture",
+                            isPrefectureSuggestionVisible &&
+                              residentActiveSection === "depart",
+                            prefectureSuggestions.length,
+                            setIsPrefectureSuggestionVisible,
+                            (index) =>
+                              applyPrefectureSuggestion(
+                                prefectureSuggestions[index],
+                                "depart"
+                              ),
+                            setIsPrefectureSuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="転出都道府県を入力"
                       />
+                      {isPrefectureSuggestionVisible &&
+                        residentActiveSection === "depart" &&
+                        residentFormData.departPrefecture && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : prefectureSuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={prefectureSuggestions.length}
+                                activeIndex={activeSuggestionIndex.prefecture}
+                                getKey={(index) =>
+                                  `depart-prefecture-suggestion-${prefectureSuggestions[index]}-${index}`
+                                }
+                                getLabel={(index) => prefectureSuggestions[index]}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    prefecture: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyPrefectureSuggestion(
+                                    prefectureSuggestions[index],
+                                    "depart"
+                                  )
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
                     {/* 転出市町村 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("depart");
+                        setIsCitySuggestionVisible(true);
+                        resetSuggestionFocus("city");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(e, setIsCitySuggestionVisible, "city")
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         市区町村
                       </label>
@@ -1847,23 +2180,91 @@ export function DataEntryForm() {
                         name="departCity"
                         value={residentFormData.departCity}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, city: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, city: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "city",
+                            isCitySuggestionVisible &&
+                              residentActiveSection === "depart",
+                            citySuggestions.length,
+                            setIsCitySuggestionVisible,
+                            (index) => applyCitySuggestion(citySuggestions[index], "depart"),
+                            setIsCitySuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="転出市町村を入力"
                       />
+                      {isCitySuggestionVisible &&
+                        residentActiveSection === "depart" &&
+                        residentFormData.departCity && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : citySuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={citySuggestions.length}
+                                activeIndex={activeSuggestionIndex.city}
+                                getKey={(index) => {
+                                  const suggestion = citySuggestions[index];
+                                  return `depart-city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`;
+                                }}
+                                getLabel={(index) => {
+                                  const suggestion = citySuggestions[index];
+                                  return joinWithFullWidthSpace([
+                                    suggestion.prefecture,
+                                    suggestion.city,
+                                  ]);
+                                }}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    city: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyCitySuggestion(citySuggestions[index], "depart")
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
-                    {/* 住所補完表示エリア（転出） */}
-                    {(residentFormData.departPrefecture || residentFormData.departCity) && (
-                      <div className="bg-blue-50 border border-blue-200 rounded p-2">
-                        <div className="text-xs text-blue-700 mb-1">住所補完候補</div>
-                        <div className="text-xs text-gray-700">
-                          <span className="text-gray-400 italic">補完機能は未実装です</span>
-                        </div>
-                      </div>
-                    )}
-
                     {/* 転出町 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("depart");
+                        setIsTownSuggestionVisible(true);
+                        resetSuggestionFocus("town");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(e, setIsTownSuggestionVisible, "town")
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         町域
                       </label>
@@ -1872,9 +2273,79 @@ export function DataEntryForm() {
                         name="departTown"
                         value={residentFormData.departTown}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, town: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            depart: { ...prev.depart, town: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "town",
+                            isTownSuggestionVisible &&
+                              residentActiveSection === "depart",
+                            townSuggestions.length,
+                            setIsTownSuggestionVisible,
+                            (index) =>
+                              applyAddressSuggestion(townSuggestions[index], "depart"),
+                            setIsTownSuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="転出町を入力"
                       />
+                      {isTownSuggestionVisible &&
+                        residentActiveSection === "depart" &&
+                        residentFormData.departTown && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : townSuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={townSuggestions.length}
+                                activeIndex={activeSuggestionIndex.town}
+                                getKey={(index) => {
+                                  const suggestion = townSuggestions[index];
+                                  return `depart-town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`;
+                                }}
+                                getLabel={(index) => {
+                                  const suggestion = townSuggestions[index];
+                                  return joinWithFullWidthSpace([
+                                    suggestion.prefecture,
+                                    suggestion.city,
+                                    suggestion.town || "（町域なし）",
+                                  ]);
+                                }}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    town: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyAddressSuggestion(townSuggestions[index], "depart")
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
                     {/* 転出大字 */}
@@ -1975,7 +2446,21 @@ export function DataEntryForm() {
                     </div>
 
                     {/* 本籍都道府県 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("registry");
+                        setIsPrefectureSuggestionVisible(true);
+                        resetSuggestionFocus("prefecture");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(
+                          e,
+                          setIsPrefectureSuggestionVisible,
+                          "prefecture"
+                        )
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         都道府県
                       </label>
@@ -1984,13 +2469,91 @@ export function DataEntryForm() {
                         name="registryPrefecture"
                         value={residentFormData.registryPrefecture}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, prefecture: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, prefecture: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "prefecture",
+                            isPrefectureSuggestionVisible &&
+                              residentActiveSection === "registry",
+                            prefectureSuggestions.length,
+                            setIsPrefectureSuggestionVisible,
+                            (index) =>
+                              applyPrefectureSuggestion(
+                                prefectureSuggestions[index],
+                                "registry"
+                              ),
+                            setIsPrefectureSuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="本籍都道府県を入力"
                       />
+                      {isPrefectureSuggestionVisible &&
+                        residentActiveSection === "registry" &&
+                        residentFormData.registryPrefecture && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : prefectureSuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={prefectureSuggestions.length}
+                                activeIndex={activeSuggestionIndex.prefecture}
+                                getKey={(index) =>
+                                  `registry-prefecture-suggestion-${prefectureSuggestions[index]}-${index}`
+                                }
+                                getLabel={(index) => prefectureSuggestions[index]}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    prefecture: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyPrefectureSuggestion(
+                                    prefectureSuggestions[index],
+                                    "registry"
+                                  )
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
                     {/* 本籍市町村 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("registry");
+                        setIsCitySuggestionVisible(true);
+                        resetSuggestionFocus("city");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(e, setIsCitySuggestionVisible, "city")
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         市区町村
                       </label>
@@ -1999,23 +2562,91 @@ export function DataEntryForm() {
                         name="registryCity"
                         value={residentFormData.registryCity}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, city: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, city: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "city",
+                            isCitySuggestionVisible &&
+                              residentActiveSection === "registry",
+                            citySuggestions.length,
+                            setIsCitySuggestionVisible,
+                            (index) => applyCitySuggestion(citySuggestions[index], "registry"),
+                            setIsCitySuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="本籍市町村を入力"
                       />
+                      {isCitySuggestionVisible &&
+                        residentActiveSection === "registry" &&
+                        residentFormData.registryCity && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : citySuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={citySuggestions.length}
+                                activeIndex={activeSuggestionIndex.city}
+                                getKey={(index) => {
+                                  const suggestion = citySuggestions[index];
+                                  return `registry-city-suggestion-${suggestion.prefecture}-${suggestion.city}-${index}`;
+                                }}
+                                getLabel={(index) => {
+                                  const suggestion = citySuggestions[index];
+                                  return joinWithFullWidthSpace([
+                                    suggestion.prefecture,
+                                    suggestion.city,
+                                  ]);
+                                }}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    city: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyCitySuggestion(citySuggestions[index], "registry")
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
-                    {/* 住所補完表示エリア（本籍） */}
-                    {(residentFormData.registryPrefecture || residentFormData.registryCity) && (
-                      <div className="bg-green-50 border border-green-200 rounded p-2">
-                        <div className="text-xs text-green-700 mb-1">住所補完候補</div>
-                        <div className="text-xs text-gray-700">
-                          <span className="text-gray-400 italic">補完機能は未実装です</span>
-                        </div>
-                      </div>
-                    )}
-
                     {/* 本籍町 */}
-                    <div>
+                    <div
+                      className="relative"
+                      onFocusCapture={() => {
+                        setResidentActiveSection("registry");
+                        setIsTownSuggestionVisible(true);
+                        resetSuggestionFocus("town");
+                      }}
+                      onBlurCapture={(e) =>
+                        handleSuggestionAreaBlur(e, setIsTownSuggestionVisible, "town")
+                      }
+                    >
                       <label className="block text-sm text-gray-700 mb-1.5">
                         町域
                       </label>
@@ -2024,9 +2655,79 @@ export function DataEntryForm() {
                         name="registryTown"
                         value={residentFormData.registryTown}
                         onChange={handleResidentChange}
+                        onCompositionStart={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, town: true },
+                          }))
+                        }
+                        onCompositionEnd={() =>
+                          setResidentComposing((prev) => ({
+                            ...prev,
+                            registry: { ...prev.registry, town: false },
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          handleSuggestionKeyDown(
+                            e,
+                            "town",
+                            isTownSuggestionVisible &&
+                              residentActiveSection === "registry",
+                            townSuggestions.length,
+                            setIsTownSuggestionVisible,
+                            (index) =>
+                              applyAddressSuggestion(townSuggestions[index], "registry"),
+                            setIsTownSuggestionVisible
+                          )
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="本籍町を入力"
                       />
+                      {isTownSuggestionVisible &&
+                        residentActiveSection === "registry" &&
+                        residentFormData.registryTown && (
+                          <div className="absolute z-30 mt-1 w-full bg-white border border-blue-200 rounded shadow-lg">
+                            {isKenAllLoading ? (
+                              <div className="px-3 py-2 text-sm text-gray-600">
+                                住所マスタを読み込み中です...
+                              </div>
+                            ) : kenAllLoadError ? (
+                              <div className="px-3 py-2 text-sm text-red-600">
+                                {kenAllLoadError}
+                              </div>
+                            ) : townSuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                該当する候補がありません
+                              </div>
+                            ) : (
+                              <VirtualSuggestionList
+                                count={townSuggestions.length}
+                                activeIndex={activeSuggestionIndex.town}
+                                getKey={(index) => {
+                                  const suggestion = townSuggestions[index];
+                                  return `registry-town-suggestion-${suggestion.postalCode}-${suggestion.prefecture}-${suggestion.city}-${suggestion.town}-${index}`;
+                                }}
+                                getLabel={(index) => {
+                                  const suggestion = townSuggestions[index];
+                                  return joinWithFullWidthSpace([
+                                    suggestion.prefecture,
+                                    suggestion.city,
+                                    suggestion.town || "（町域なし）",
+                                  ]);
+                                }}
+                                onHover={(index) =>
+                                  setActiveSuggestionIndex((prev) => ({
+                                    ...prev,
+                                    town: index,
+                                  }))
+                                }
+                                onSelect={(index) =>
+                                  applyAddressSuggestion(townSuggestions[index], "registry")
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                     </div>
 
                     {/* 本籍大字 */}
