@@ -64,9 +64,7 @@ export const findCitySuggestions = (
 ): KenAllAddress[] => {
   const prefecture = query.prefecture.trim();
   const cityQueryTokens = buildQueryTokens(query.city);
-  const town = query.town.trim();
-
-  if (!cityQueryTokens.raw || town) {
+  if (!cityQueryTokens.raw) {
     return [];
   }
 

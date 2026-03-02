@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Save, Upload, FileText, User, Trash2, Table2, Link, FileUser, Copy, ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Save, Upload, FileText, User, Trash2, Table2, Link, FileUser, Copy, ChevronDown, Settings } from "lucide-react";
 import {
   type KenAllAddress,
   loadKenAllData,
@@ -93,9 +93,98 @@ const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
   town: -1,
 };
 
+const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
+
+const BASIC_FIELD_ORDER = [
+  "operator",
+  "filename",
+  "postalCode",
+  "prefecture",
+  "city",
+  "town",
+  "ooaza",
+  "aza",
+  "koaza",
+  "banchi",
+  "building",
+  "company",
+  "position",
+  "name",
+  "phone",
+  "notes",
+] as const;
+
+const DETAIL_ADDRESS_FIELDS = new Set<string>(["ooaza", "aza", "koaza"]);
+
+type PhoneInputMode = "mobile" | "landline";
+
+interface AppSettings {
+  isOperatorFixed: boolean;
+  fixedOperatorName: string;
+}
+
+const formatPostalCode = (rawValue: string): string => {
+  const digits = rawValue.replace(/[^\d]/g, "").slice(0, 7);
+  if (digits.length <= 3) {
+    return digits;
+  }
+
+  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+};
+
+const splitByPattern = (digits: string, blocks: number[]): string => {
+  let cursor = 0;
+  const parts: string[] = [];
+
+  for (const block of blocks) {
+    if (cursor >= digits.length) {
+      break;
+    }
+    const next = digits.slice(cursor, cursor + block);
+    if (!next) {
+      break;
+    }
+    parts.push(next);
+    cursor += block;
+  }
+
+  if (cursor < digits.length) {
+    parts.push(digits.slice(cursor));
+  }
+
+  return parts.join("-");
+};
+
+const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
+  const digits = rawValue.replace(/[^\d]/g, "").slice(0, 11);
+  if (!digits) {
+    return "";
+  }
+
+  if (mode === "mobile") {
+    return splitByPattern(digits, [3, 4, 4]);
+  }
+
+  if (digits.startsWith("03") || digits.startsWith("06")) {
+    return splitByPattern(digits, [2, 4, 4]);
+  }
+
+  if (digits.length <= 10) {
+    return splitByPattern(digits, [3, 3, 4]);
+  }
+
+  return splitByPattern(digits, [3, 4, 4]);
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>({
+    isOperatorFixed: false,
+    fixedOperatorName: "",
+  });
+  const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
   const [formData, setFormData] = useState<FormData>({
     operator: "",
     filename: "",
@@ -156,6 +245,7 @@ export function DataEntryForm() {
   const [isPrefectureComposing, setIsPrefectureComposing] = useState(false);
   const [isCityComposing, setIsCityComposing] = useState(false);
   const [isTownComposing, setIsTownComposing] = useState(false);
+  const basicFormRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -186,6 +276,47 @@ export function DataEntryForm() {
       isCancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+      if (!saved) {
+        return;
+      }
+      const parsed = JSON.parse(saved) as Partial<AppSettings>;
+      setSettings({
+        isOperatorFixed: Boolean(parsed.isOperatorFixed),
+        fixedOperatorName:
+          typeof parsed.fixedOperatorName === "string"
+            ? parsed.fixedOperatorName
+            : "",
+      });
+    } catch {
+      // 設定の復元に失敗した場合は既定値を使う
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    if (!settings.isOperatorFixed) {
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      operator: settings.fixedOperatorName,
+    }));
+  }, [settings.fixedOperatorName, settings.isOperatorFixed]);
+
+  useEffect(() => {
+    setFormData((prev) => ({
+      ...prev,
+      phone: formatPhoneNumber(prev.phone, phoneInputMode),
+    }));
+  }, [phoneInputMode]);
 
   // 市区町村入力中は市区町村候補を出す
   const citySuggestions = useMemo(() => {
@@ -238,10 +369,8 @@ export function DataEntryForm() {
     }
 
     const prefecture = formData.prefecture.trim();
-    const city = formData.city.trim();
-    const town = formData.town.trim();
 
-    if (!prefecture || city || town) {
+    if (!prefecture) {
       return [];
     }
 
@@ -291,6 +420,24 @@ export function DataEntryForm() {
     if (name === "postalCode") {
       setActiveSuggestionIndex((prev) => ({ ...prev, postal: -1 }));
       setIsPostalSuggestionVisible(value.trim().length > 0);
+      setFormData((prev) => ({
+        ...prev,
+        postalCode: formatPostalCode(value),
+      }));
+      return;
+    }
+
+    if (name === "phone") {
+      setFormData((prev) => ({
+        ...prev,
+        phone: formatPhoneNumber(value, phoneInputMode),
+      }));
+      return;
+    }
+
+    if (name === "postalCode") {
+      setActiveSuggestionIndex((prev) => ({ ...prev, postal: -1 }));
+      setIsPostalSuggestionVisible(value.trim().length > 0);
     }
     if (name === "prefecture") {
       setActiveSuggestionIndex((prev) => ({ ...prev, prefecture: -1 }));
@@ -309,6 +456,81 @@ export function DataEntryForm() {
       ...prev,
       [name]: value,
     }));
+  };
+
+  const findNextFieldName = (
+    currentName: string,
+    direction: 1 | -1,
+    includeDetailFields: boolean
+  ): string | null => {
+    const currentIndex = BASIC_FIELD_ORDER.indexOf(
+      currentName as (typeof BASIC_FIELD_ORDER)[number]
+    );
+
+    if (currentIndex < 0) {
+      return null;
+    }
+
+    let cursor = currentIndex;
+    while (true) {
+      cursor += direction;
+      if (cursor < 0 || cursor >= BASIC_FIELD_ORDER.length) {
+        return null;
+      }
+
+      const nextName = BASIC_FIELD_ORDER[cursor];
+      if (!includeDetailFields && DETAIL_ADDRESS_FIELDS.has(nextName)) {
+        continue;
+      }
+
+      return nextName;
+    }
+  };
+
+  const focusByFieldName = (fieldName: string) => {
+    const target = basicFormRef.current?.querySelector<
+      HTMLInputElement | HTMLTextAreaElement
+    >(`[name="${fieldName}"]`);
+    if (!target || target.disabled) {
+      return false;
+    }
+
+    target.focus();
+    if (target instanceof HTMLInputElement) {
+      target.select();
+    }
+    return true;
+  };
+
+  const handleBasicFormNavigation = (
+    e: React.KeyboardEvent<HTMLDivElement>
+  ) => {
+    if (e.defaultPrevented) {
+      return;
+    }
+
+    const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+    const fieldName = target?.name;
+
+    if (!fieldName) {
+      return;
+    }
+
+    const isNavigationKey =
+      e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp";
+    if (!isNavigationKey) {
+      return;
+    }
+
+    const direction: 1 | -1 = e.key === "ArrowUp" ? -1 : 1;
+    const nextFieldName = findNextFieldName(fieldName, direction, e.shiftKey);
+    if (!nextFieldName) {
+      return;
+    }
+
+    if (focusByFieldName(nextFieldName)) {
+      e.preventDefault();
+    }
   };
 
   const moveSuggestionFocus = (
@@ -478,7 +700,7 @@ export function DataEntryForm() {
   const handleClear = () => {
     if (mode === "basic") {
       setFormData({
-        operator: "",
+        operator: settings.isOperatorFixed ? settings.fixedOperatorName : "",
         filename: "",
         postalCode: "",
         prefecture: "",
@@ -496,6 +718,7 @@ export function DataEntryForm() {
         notes: "",
       });
       setPdfFile(null);
+      setPhoneInputMode("mobile");
     } else {
       setResidentFormData({
         departName: "",
