@@ -118,6 +118,7 @@ const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
 };
 
 const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
+const KANJI_ME_EMBED_URL = "https://kanji.me/";
 
 const BASIC_FIELD_ORDER = [
   "operator",
@@ -452,6 +453,31 @@ const VirtualSuggestionList = ({
   );
 };
 
+const buildSheetEmbedUrl = (rawUrl: string): string => {
+  const trimmedUrl = rawUrl.trim();
+  if (!trimmedUrl) {
+    return "";
+  }
+
+  try {
+    const parsedUrl = new URL(trimmedUrl);
+    if (parsedUrl.pathname.includes("/edit")) {
+      parsedUrl.searchParams.set("rm", "minimal");
+    }
+    return parsedUrl.toString();
+  } catch {
+    if (!trimmedUrl.includes("/edit")) {
+      return trimmedUrl;
+    }
+    if (trimmedUrl.includes("?")) {
+      return trimmedUrl.includes("rm=")
+        ? trimmedUrl
+        : `${trimmedUrl}&rm=minimal`;
+    }
+    return trimmedUrl.replace("/edit", "/edit?rm=minimal");
+  }
+};
+
 export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
@@ -504,8 +530,9 @@ export function DataEntryForm() {
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
-  const [viewMode, setViewMode] = useState<"pdf" | "sheet">("pdf");
+  const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
   const [sheetUrl, setSheetUrl] = useState<string>("");
+  const sheetEmbedUrl = buildSheetEmbedUrl(sheetUrl);
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
   const [postalCodeSuggestions, setPostalCodeSuggestions] = useState<KenAllAddress[]>([]);
@@ -2981,18 +3008,24 @@ export function DataEntryForm() {
         </div>
       </div>
 
-      {/* 右側：PDFプレビュー / スプレッドシート */}
+      {/* 右側：PDFプレビュー / スプレッドシート / 漢字 */}
       <div className="w-1/2 bg-gray-100 flex flex-col">
         <div className="bg-white border-b border-gray-200">
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-2">
               {viewMode === "pdf" ? (
                 <FileText className="w-5 h-5 text-gray-600" />
-              ) : (
+              ) : viewMode === "sheet" ? (
                 <Table2 className="w-5 h-5 text-gray-600" />
+              ) : (
+                <FileUser className="w-5 h-5 text-gray-600" />
               )}
               <h2 className="text-lg text-gray-900">
-                {viewMode === "pdf" ? "PDFプレビュー" : "Googleスプレッドシート"}
+                {viewMode === "pdf"
+                  ? "PDFプレビュー"
+                  : viewMode === "sheet"
+                    ? "Googleスプレッドシート"
+                    : "kanji.me"}
               </h2>
             </div>
             <div className="flex gap-2">
@@ -3018,6 +3051,17 @@ export function DataEntryForm() {
                 <Table2 className="w-4 h-4" />
                 シート
               </button>
+              <button
+                onClick={() => setViewMode("kanji")}
+                className={`px-4 py-2 rounded flex items-center gap-2 transition-colors ${
+                  viewMode === "kanji"
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                <FileUser className="w-4 h-4" />
+                漢字
+              </button>
             </div>
           </div>
           {viewMode === "sheet" && (
@@ -3041,9 +3085,9 @@ export function DataEntryForm() {
           )}
         </div>
         <div className="flex-1 p-4 overflow-hidden">
-          {viewMode === "pdf" ? (
-            // PDFプレビュー
-            pdfFile ? (
+          <div className={`h-full ${viewMode === "pdf" ? "block" : "hidden"}`}>
+            {/* PDFプレビュー */}
+            {pdfFile ? (
               <iframe
                 src={pdfFile}
                 className="w-full h-full border border-gray-300 rounded bg-white"
@@ -3066,14 +3110,14 @@ export function DataEntryForm() {
                   />
                 </label>
               </div>
-            )
-          ) : (
-            // Googleスプレッドシート表示
-            sheetUrl ? (
+            )}
+          </div>
+
+          <div className={`h-full ${viewMode === "sheet" ? "block" : "hidden"}`}>
+            {/* Googleスプレッドシート表示 */}
+            {sheetEmbedUrl ? (
               <iframe
-                src={sheetUrl.includes('/edit') 
-                  ? sheetUrl.replace('/edit', '/edit?rm=minimal') 
-                  : sheetUrl}
+                src={sheetEmbedUrl}
                 className="w-full h-full border border-gray-300 rounded bg-white"
                 title="Google Spreadsheet"
               />
@@ -3087,8 +3131,17 @@ export function DataEntryForm() {
                   </p>
                 </div>
               </div>
-            )
-          )}
+            )}
+          </div>
+
+          <div className={`h-full ${viewMode === "kanji" ? "block" : "hidden"}`}>
+            {/* kanji.me 表示 */}
+            <iframe
+              src={KANJI_ME_EMBED_URL}
+              className="w-full h-full border border-gray-300 rounded bg-white"
+              title="kanji.me"
+            />
+          </div>
         </div>
       </div>
 
