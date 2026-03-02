@@ -1,9 +1,12 @@
 {
   "name": "@figma/my-make-file",
   "private": true,
-  "version": "0.0.21",
+  "version": "0.0.22",
   "type": "module",
   "scripts": {
+    "generate:ken-all-index": "node scripts/build-ken-all-index.mjs",
+    "prebuild": "npm run generate:ken-all-index",
+    "predev": "npm run generate:ken-all-index",
     "build": "vite build",
     "dev": "vite"
   },

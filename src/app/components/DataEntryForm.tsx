@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   Save,
   Upload,
@@ -13,15 +13,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import {
-  type KenAllAddress,
-  loadKenAllData,
-} from "../lib/kenAll";
-import {
-  type PrefectureCandidate,
-  findPrefectureSuggestions,
-} from "../lib/prefectureSearch";
-import { findCitySuggestions, findTownSuggestions } from "../lib/addressSuggestions";
+import { type KenAllAddress } from "../lib/kenAll";
 
 interface FormData {
   operator: string;
@@ -75,22 +67,6 @@ interface SavedResidentEntry extends ResidentFormData {
   savedAt: string;
 }
 
-const dedupeAddresses = (addresses: KenAllAddress[]) => {
-  const seen = new Set<string>();
-  const unique: KenAllAddress[] = [];
-
-  for (const address of addresses) {
-    const key = `${address.prefecture}|${address.city}|${address.town}|${address.postalCode}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    unique.push(address);
-  }
-
-  return unique;
-};
-
 const FULL_WIDTH_SPACE = "　";
 const SUGGESTION_ITEM_HEIGHT = 36;
 const SUGGESTION_PANEL_MAX_HEIGHT = 288;
@@ -101,6 +77,35 @@ const joinWithFullWidthSpace = (parts: string[]) => {
 };
 
 type SuggestionType = "postal" | "prefecture" | "city" | "town";
+
+type WorkerRequest =
+  | { type: "init" }
+  | { type: "queryPostal"; id: number; postalCode: string }
+  | { type: "queryPrefecture"; id: number; prefecture: string }
+  | {
+      type: "queryCity";
+      id: number;
+      prefecture: string;
+      city: string;
+      town: string;
+    }
+  | {
+      type: "queryTown";
+      id: number;
+      prefecture: string;
+      city: string;
+      town: string;
+    };
+
+type WorkerResponse =
+  | { type: "ready" }
+  | { type: "error"; message: string }
+  | { type: "postalResult"; id: number; suggestions: KenAllAddress[] }
+  | { type: "prefectureResult"; id: number; suggestions: string[] }
+  | { type: "cityResult"; id: number; suggestions: KenAllAddress[] }
+  | { type: "townResult"; id: number; suggestions: KenAllAddress[] };
+
+type WorkerQueryRequest = Omit<Exclude<WorkerRequest, { type: "init" }>, "id">;
 
 const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
   postal: -1,
@@ -399,9 +404,13 @@ export function DataEntryForm() {
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet">("pdf");
   const [sheetUrl, setSheetUrl] = useState<string>("");
-  const [kenAllAddresses, setKenAllAddresses] = useState<KenAllAddress[]>([]);
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
+  const [postalCodeSuggestions, setPostalCodeSuggestions] = useState<KenAllAddress[]>([]);
+  const [prefectureSuggestions, setPrefectureSuggestions] = useState<string[]>([]);
+  const [citySuggestions, setCitySuggestions] = useState<KenAllAddress[]>([]);
+  const [townSuggestions, setTownSuggestions] = useState<KenAllAddress[]>([]);
+  const [isWorkerReady, setIsWorkerReady] = useState(false);
   const [isPostalSuggestionVisible, setIsPostalSuggestionVisible] = useState(false);
   const [isPrefectureSuggestionVisible, setIsPrefectureSuggestionVisible] =
     useState(false);
@@ -415,53 +424,88 @@ export function DataEntryForm() {
   const [isCityComposing, setIsCityComposing] = useState(false);
   const [isTownComposing, setIsTownComposing] = useState(false);
   const basicFormRef = useRef<HTMLDivElement>(null);
+  const addressWorkerRef = useRef<Worker | null>(null);
+  const requestSerialRef = useRef(0);
+  const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
+    postal: 0,
+    prefecture: 0,
+    city: 0,
+    town: 0,
+  });
   const deferredPostalCode = useDeferredValue(formData.postalCode);
   const deferredPrefecture = useDeferredValue(formData.prefecture);
   const deferredCity = useDeferredValue(formData.city);
   const deferredTown = useDeferredValue(formData.town);
 
-  const prefectureCandidates = useMemo(() => {
-    const uniquePrefectureCandidatesMap = new Map<string, PrefectureCandidate>();
-    for (const address of kenAllAddresses) {
-      if (uniquePrefectureCandidatesMap.has(address.prefecture)) {
-        continue;
-      }
-      uniquePrefectureCandidatesMap.set(address.prefecture, {
-        prefecture: address.prefecture,
-        prefectureKana: address.prefectureKana,
-        prefectureRomaji: address.prefectureRomaji,
-      });
-    }
-    return Array.from(uniquePrefectureCandidatesMap.values());
-  }, [kenAllAddresses]);
-
   useEffect(() => {
-    let isCancelled = false;
+    let isDisposed = false;
+    const worker = new Worker(
+      new URL("../workers/addressSearchWorker.ts", import.meta.url),
+      { type: "module" }
+    );
+    addressWorkerRef.current = worker;
 
-    const fetchKenAll = async () => {
-      setIsKenAllLoading(true);
-      setKenAllLoadError(null);
+    setIsKenAllLoading(true);
+    setKenAllLoadError(null);
+    setIsWorkerReady(false);
 
-      try {
-        const loadedAddresses = await loadKenAllData();
-        if (!isCancelled) {
-          setKenAllAddresses(loadedAddresses);
+    const handleMessage = (event: MessageEvent<WorkerResponse>) => {
+      if (isDisposed) {
+        return;
+      }
+
+      const message = event.data;
+      if (message.type === "ready") {
+        setIsKenAllLoading(false);
+        setKenAllLoadError(null);
+        setIsWorkerReady(true);
+        return;
+      }
+
+      if (message.type === "error") {
+        setIsKenAllLoading(false);
+        setKenAllLoadError(message.message);
+        setIsWorkerReady(false);
+        return;
+      }
+
+      if (message.type === "postalResult") {
+        if (latestRequestIdRef.current.postal !== message.id) {
+          return;
         }
-      } catch {
-        if (!isCancelled) {
-          setKenAllLoadError("住所マスタの読み込みに失敗しました");
+        setPostalCodeSuggestions(message.suggestions);
+        return;
+      }
+      if (message.type === "prefectureResult") {
+        if (latestRequestIdRef.current.prefecture !== message.id) {
+          return;
         }
-      } finally {
-        if (!isCancelled) {
-          setIsKenAllLoading(false);
+        setPrefectureSuggestions(message.suggestions);
+        return;
+      }
+      if (message.type === "cityResult") {
+        if (latestRequestIdRef.current.city !== message.id) {
+          return;
         }
+        setCitySuggestions(message.suggestions);
+        return;
+      }
+      if (message.type === "townResult") {
+        if (latestRequestIdRef.current.town !== message.id) {
+          return;
+        }
+        setTownSuggestions(message.suggestions);
       }
     };
 
-    fetchKenAll();
+    worker.addEventListener("message", handleMessage);
+    worker.postMessage({ type: "init" } as WorkerRequest);
 
     return () => {
-      isCancelled = true;
+      isDisposed = true;
+      worker.removeEventListener("message", handleMessage);
+      worker.terminate();
+      addressWorkerRef.current = null;
     };
   }, []);
 
@@ -506,81 +550,106 @@ export function DataEntryForm() {
     }));
   }, [phoneInputMode]);
 
-  // 市区町村入力中は市区町村候補を出す
-  const citySuggestions = useMemo(() => {
-    if (isCityComposing) {
-      return [];
+  const requestWorker = (type: SuggestionType, payload: WorkerQueryRequest) => {
+    const worker = addressWorkerRef.current;
+    if (!worker) {
+      return;
+    }
+    const id = ++requestSerialRef.current;
+    latestRequestIdRef.current[type] = id;
+    worker.postMessage({
+      ...payload,
+      id,
+    });
+  };
+
+  useEffect(() => {
+    if (!isWorkerReady) {
+      setPostalCodeSuggestions([]);
+      return;
     }
 
-    return findCitySuggestions(
-      kenAllAddresses,
-      {
-        prefecture: deferredPrefecture,
-        city: deferredCity,
-        town: deferredTown,
-      }
-    );
+    const normalizedPostalCode = deferredPostalCode.replace(/[^\d]/g, "");
+    if (!normalizedPostalCode) {
+      setPostalCodeSuggestions([]);
+      return;
+    }
+
+    requestWorker("postal", {
+      type: "queryPostal",
+      postalCode: normalizedPostalCode,
+    });
+  }, [deferredPostalCode, isWorkerReady]);
+
+  useEffect(() => {
+    if (!isWorkerReady || isPrefectureComposing) {
+      setPrefectureSuggestions([]);
+      return;
+    }
+
+    const prefecture = deferredPrefecture.trim();
+    if (!prefecture) {
+      setPrefectureSuggestions([]);
+      return;
+    }
+
+    requestWorker("prefecture", {
+      type: "queryPrefecture",
+      prefecture,
+    });
+  }, [deferredPrefecture, isPrefectureComposing, isWorkerReady]);
+
+  useEffect(() => {
+    if (!isWorkerReady || isCityComposing) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    const city = deferredCity.trim();
+    if (!city) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    requestWorker("city", {
+      type: "queryCity",
+      prefecture: deferredPrefecture,
+      city: deferredCity,
+      town: deferredTown,
+    });
   }, [
     deferredPrefecture,
     deferredCity,
     deferredTown,
     isCityComposing,
-    kenAllAddresses,
+    isWorkerReady,
   ]);
 
-  // 町域入力中は町域候補を出す
-  const townSuggestions = useMemo(() => {
-    if (isTownComposing) {
-      return [];
+  useEffect(() => {
+    if (!isWorkerReady || isTownComposing) {
+      setTownSuggestions([]);
+      return;
     }
 
-    return findTownSuggestions(
-      kenAllAddresses,
-      {
-        prefecture: deferredPrefecture,
-        city: deferredCity,
-        town: deferredTown,
-      }
-    );
+    const town = deferredTown.trim();
+    if (!town) {
+      setTownSuggestions([]);
+      return;
+    }
+
+    requestWorker("town", {
+      type: "queryTown",
+      prefecture: deferredPrefecture,
+      city: deferredCity,
+      town: deferredTown,
+    });
   }, [
     deferredPrefecture,
     deferredCity,
     deferredTown,
     isTownComposing,
-    kenAllAddresses,
+    isWorkerReady,
   ]);
-
-  // 都道府県のみ入力中は都道府県候補だけを出す
-  const prefectureSuggestions = useMemo(() => {
-    if (isPrefectureComposing) {
-      return [];
-    }
-
-    const prefecture = deferredPrefecture.trim();
-
-    if (!prefecture) {
-      return [];
-    }
-
-    return findPrefectureSuggestions(prefectureCandidates, prefecture);
-  }, [
-    deferredPrefecture,
-    isPrefectureComposing,
-    prefectureCandidates,
-  ]);
-
-  // 郵便番号入力向けの候補
-  const postalCodeSuggestions = useMemo(() => {
-    const normalizedPostalCode = deferredPostalCode.replace(/[^\d]/g, "");
-    if (!normalizedPostalCode) {
-      return [];
-    }
-
-    return dedupeAddresses(
-      kenAllAddresses
-        .filter((address) => address.postalCode.startsWith(normalizedPostalCode))
-    );
-  }, [deferredPostalCode, kenAllAddresses]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
