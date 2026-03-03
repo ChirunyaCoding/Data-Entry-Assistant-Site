@@ -135,7 +135,7 @@ const RESIDENT_SHEET_START_ROW = 6;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
   basic:
-    "https://docs.google.com/spreadsheets/d/1ihPDR7CxURU27nerMxHcuz4LsnleEn5w/edit?usp=sharing&ouid=103802180099597441912&rtpof=true&sd=true",
+    "https://docs.google.com/spreadsheets/d/1EScIk20fx6oTDj43-xF0LeHYJzCUSNp2dMlNvHOsIRU/edit?usp=sharing",
   residentPrimary:
     "https://docs.google.com/spreadsheets/d/1rXxUwKkhnzholAW7AfNSJ_jfhSL2oPCHhobkZt96rh0/edit?usp=sharing",
   residentSecondary:
