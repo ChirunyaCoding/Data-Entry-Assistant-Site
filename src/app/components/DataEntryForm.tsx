@@ -6,7 +6,6 @@ import {
   User,
   Trash2,
   Table2,
-  Link,
   FileUser,
   Copy,
   ChevronDown,
@@ -118,8 +117,18 @@ const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
 };
 
 const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
-const SHEET_URL_STORAGE_KEY = "data-entry-tool.sheet-url.v1";
+const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
+  "data-entry-tool.resident-sheet-selection.v1";
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
+const FIXED_SHEET_URLS = {
+  basic:
+    "https://docs.google.com/spreadsheets/d/1ihPDR7CxURU27nerMxHcuz4LsnleEn5w/edit?usp=sharing&ouid=103802180099597441912&rtpof=true&sd=true",
+  residentPrimary:
+    "https://docs.google.com/spreadsheets/d/1rXxUwKkhnzholAW7AfNSJ_jfhSL2oPCHhobkZt96rh0/edit?usp=sharing",
+  residentSecondary:
+    "https://docs.google.com/spreadsheets/d/1vhmwu7PC_VYxmTgWHYChstsNeZEY0JgRgf_t2bWKQuI/edit?usp=sharing",
+} as const;
+type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
 
 const BASIC_FIELD_ORDER = [
   "operator",
@@ -550,18 +559,36 @@ export function DataEntryForm() {
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
-  const [sheetUrl, setSheetUrl] = useState<string>(() => {
-    if (typeof window === "undefined") {
-      return "";
-    }
+  const [residentSheetSelection, setResidentSheetSelection] =
+    useState<ResidentSheetSelection>(() => {
+      if (typeof window === "undefined") {
+        return "residentPrimary";
+      }
 
-    try {
-      return window.localStorage.getItem(SHEET_URL_STORAGE_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
-  const sheetEmbedUrl = normalizeSheetUrl(sheetUrl);
+      try {
+        const savedSelection = window.localStorage.getItem(
+          RESIDENT_SHEET_SELECTION_STORAGE_KEY
+        );
+        return savedSelection === "residentSecondary"
+          ? "residentSecondary"
+          : "residentPrimary";
+      } catch {
+        return "residentPrimary";
+      }
+    });
+  const activeSheetUrl =
+    mode === "basic"
+      ? FIXED_SHEET_URLS.basic
+      : FIXED_SHEET_URLS[residentSheetSelection];
+  const sheetEmbedUrl = normalizeSheetUrl(activeSheetUrl);
+  const residentSheetSelectionMessage =
+    mode === "basic"
+      ? "基本モードでは固定シートを表示します。"
+      : `住民票モードでは${
+          residentSheetSelection === "residentPrimary"
+            ? "住民票シート1"
+            : "住民票シート2"
+        }を表示中です。`;
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
   const [postalCodeSuggestions, setPostalCodeSuggestions] = useState<KenAllAddress[]>([]);
@@ -734,12 +761,19 @@ export function DataEntryForm() {
   }, [settings]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     try {
-      window.localStorage.setItem(SHEET_URL_STORAGE_KEY, sheetUrl);
+      window.localStorage.setItem(
+        RESIDENT_SHEET_SELECTION_STORAGE_KEY,
+        residentSheetSelection
+      );
     } catch {
       // 保存に失敗した場合はメモリ上の値を使う
     }
-  }, [sheetUrl]);
+  }, [residentSheetSelection]);
 
   useEffect(() => {
     if (!settings.isOperatorFixed) {
@@ -3101,19 +3135,44 @@ export function DataEntryForm() {
           </div>
           {viewMode === "sheet" && (
             <div className="px-4 pb-4">
-              <div className="flex gap-2">
-                <div className="flex-1 relative">
-                  <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="text"
-                    value={sheetUrl}
-                    onChange={(e) => setSheetUrl(e.target.value)}
-                    placeholder="GoogleスプレッドシートのURLを入力..."
-                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  />
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-500">
+                  {residentSheetSelectionMessage}
+                </span>
+                {mode === "resident" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setResidentSheetSelection("residentPrimary")}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                        residentSheetSelection === "residentPrimary"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      住民票シート1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResidentSheetSelection("residentSecondary")}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                        residentSheetSelection === "residentSecondary"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      住民票シート2
+                    </button>
+                  </>
+                )}
               </div>
+              <p className="text-xs text-gray-500 mt-1 break-all">
+                表示URL: {activeSheetUrl}
+              </p>
               <p className="text-xs text-gray-500 mt-1">
+                ※ 基本モードは固定URL、住民票モードは2つの固定URLのみ切替できます
+              </p>
+              <p className="text-xs text-gray-500">
                 ※ スプレッドシートを「リンクを知っている全員」に共有設定してください
               </p>
               <p className="text-xs text-gray-500">
@@ -3163,9 +3222,11 @@ export function DataEntryForm() {
               <div className="w-full h-full flex items-center justify-center bg-white border-2 border-dashed border-gray-300 rounded">
                 <div className="text-center">
                   <Table2 className="w-16 h-16 text-gray-400 mx-auto mb-3" />
-                  <p className="text-gray-500">GoogleスプレッドシートのURLを入力してください</p>
+                  <p className="text-gray-500">
+                    固定シートURLの読み込みに失敗しました
+                  </p>
                   <p className="text-sm text-gray-400 mt-2">
-                    上部の入力欄にスプレッドシートのURLを貼り付け
+                    ページを再読み込みして改善しない場合は設定を確認してください
                   </p>
                 </div>
               </div>
