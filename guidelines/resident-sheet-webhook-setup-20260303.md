@@ -75,6 +75,10 @@ function handleAppendRow(payload) {
   sheet.getRange(nextRow, 11).setValue(values.K || ""); // K
   sheet.getRange(nextRow, 12).setValue(values.L || ""); // L
 
+  // 書き込み時の表示書式を統一（メイリオ / 10）
+  sheet.getRange(nextRow, 2).setFontFamily("Meiryo").setFontSize(10);      // B
+  sheet.getRange(nextRow, 6, 1, 7).setFontFamily("Meiryo").setFontSize(10); // F-L
+
   return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
 
@@ -93,7 +97,7 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 ```
 
 ## 3. 反映確認
-住民票モードで書き込み先シートを選択して `保存` を押し、
+住民票モードで書き込み先シートを選択して `書き込み` を押し、
 `シート「xxx」のn行目へ反映しました。` が表示されることを確認します。
 
 ## 4. タブ選択確認
