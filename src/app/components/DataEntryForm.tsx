@@ -545,6 +545,7 @@ interface ResidentSheetWritePayload {
 interface ResidentSheetWebhookResponse {
   ok: boolean;
   row?: number;
+  sheetName?: string;
   message?: string;
 }
 
@@ -606,6 +607,12 @@ const postResidentSheetPayload = async (
 
   if (responseBody.ok !== true) {
     throw new Error(responseBody.message ?? "シート反映に失敗しました。");
+  }
+
+  if (responseBody.sheetName !== payload.sheetName) {
+    throw new Error(
+      "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+    );
   }
 
   return responseBody;

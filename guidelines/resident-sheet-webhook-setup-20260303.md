@@ -42,7 +42,7 @@ function doPost(e) {
     sheet.getRange(nextRow, 11).setValue(values.K || ""); // K
     sheet.getRange(nextRow, 12).setValue(values.L || ""); // L
 
-    return jsonResponse({ ok: true, row: nextRow });
+    return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
   } catch (error) {
     return jsonResponse({ ok: false, message: String(error) });
   }
