@@ -622,6 +622,14 @@ interface BasicSheetWritePayload {
   };
 }
 
+interface BasicFileNameSheetWritePayload {
+  action: "appendBasicFileNameRows";
+  sheetId: string;
+  sheetName: string;
+  startRow: number;
+  fileNames: string[];
+}
+
 interface ResidentSheetListPayload {
   action: "listSheets";
   sheetId: string;
@@ -736,11 +744,24 @@ const buildResidentFolderSheetRows = (files: File[]): ResidentFolderSheetWriteRo
   }));
 };
 
+const buildBasicFileNamesFromFolder = (files: File[]): string[] => {
+  return files
+    .filter((file) => TIFF_EXTENSION_PATTERN.test(file.name))
+    .sort((a, b) => {
+      const aPath = (a.webkitRelativePath || a.name).trim();
+      const bPath = (b.webkitRelativePath || b.name).trim();
+      return aPath.localeCompare(bPath, "ja");
+    })
+    .map((file) => file.name.trim())
+    .filter((fileName) => fileName.length > 0);
+};
+
 type ResidentSheetWebhookPayload =
   | ResidentSheetWritePayload
   | ResidentFolderSheetWritePayload
   | ResidentSheetListPayload
   | BasicSheetWritePayload
+  | BasicFileNameSheetWritePayload
   | SheetClearPayload;
 
 interface SheetWebhookConfig {
@@ -956,6 +977,7 @@ export function DataEntryForm() {
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
   const [isBasicSheetSaving, setIsBasicSheetSaving] = useState(false);
+  const [isBasicFolderImporting, setIsBasicFolderImporting] = useState(false);
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
   const [basicSheetSyncSuccess, setBasicSheetSyncSuccess] = useState("");
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
@@ -1116,6 +1138,7 @@ export function DataEntryForm() {
   });
   const basicFormRef = useRef<HTMLDivElement>(null);
   const residentFormRef = useRef<HTMLDivElement>(null);
+  const basicFolderInputRef = useRef<HTMLInputElement>(null);
   const residentFolderInputRef = useRef<HTMLInputElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
   const requestSerialRef = useRef(0);
@@ -1157,13 +1180,14 @@ export function DataEntryForm() {
       : residentComposing[residentActiveSection].town;
 
   useEffect(() => {
-    const input = residentFolderInputRef.current;
-    if (!input) {
-      return;
-    }
-
-    input.setAttribute("webkitdirectory", "");
-    input.setAttribute("directory", "");
+    const folderInputs = [basicFolderInputRef.current, residentFolderInputRef.current];
+    folderInputs.forEach((input) => {
+      if (!input) {
+        return;
+      }
+      input.setAttribute("webkitdirectory", "");
+      input.setAttribute("directory", "");
+    });
   }, [mode]);
 
   useEffect(() => {
@@ -2095,6 +2119,119 @@ export function DataEntryForm() {
       setBasicSheetSyncError(message);
     } finally {
       setIsBasicSheetSaving(false);
+    }
+  };
+
+  const handleBasicFolderImportClick = () => {
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
+
+    const input = basicFolderInputRef.current;
+    if (!input) {
+      setBasicSheetSyncError(
+        "フォルダ選択入力の初期化に失敗しました。画面を再読み込みしてください。"
+      );
+      return;
+    }
+
+    input.value = "";
+    input.click();
+  };
+
+  const handleBasicFolderImportChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
+
+    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.basic);
+    if (!targetSheetId) {
+      setBasicSheetSyncError(
+        "シートIDを取得できないため、シート反映をスキップしました。"
+      );
+      return;
+    }
+
+    if (sheetTabLoadingBySheetId[targetSheetId]) {
+      setBasicSheetSyncError(
+        "シートタブ一覧を取得中です。少し待ってからフォルダ読み込みしてください。"
+      );
+      return;
+    }
+
+    const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
+    if (tabLoadError) {
+      setBasicSheetSyncError(
+        `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
+      );
+      return;
+    }
+
+    const normalizedTargetSheetName = (
+      selectedSheetTabBySheetId[targetSheetId] ?? ""
+    ).trim();
+    if (!normalizedTargetSheetName) {
+      setBasicSheetSyncError("書き込み先シートを選択してください。");
+      return;
+    }
+
+    const fileNames = buildBasicFileNamesFromFolder(files);
+    if (fileNames.length === 0) {
+      setBasicSheetSyncError(
+        "読み込んだフォルダ内に .tif または .tiff ファイルが見つかりません。"
+      );
+      return;
+    }
+
+    const payload: BasicFileNameSheetWritePayload = {
+      action: "appendBasicFileNameRows",
+      sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
+      startRow: BASIC_SHEET_START_ROW,
+      fileNames,
+    };
+
+    setIsBasicFolderImporting(true);
+    try {
+      const result = await postSheetWebhook(
+        payload,
+        basicSheetWebhookConfig,
+        "基本ファイル名書き込み"
+      );
+
+      if (result.sheetName && result.sheetName !== normalizedTargetSheetName) {
+        throw new Error(
+          "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+        );
+      }
+
+      const writtenCount =
+        typeof result.rowsWritten === "number"
+          ? result.rowsWritten
+          : fileNames.length;
+      const writtenRange =
+        typeof result.startRow === "number" && typeof result.endRow === "number"
+          ? `${result.startRow}行目〜${result.endRow}行目`
+          : `${writtenCount}行`;
+
+      setBasicSheetSyncSuccess(
+        `シート「${normalizedTargetSheetName}」のB列へファイル名を${writtenRange}で反映しました。`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "フォルダ読み込み中に不明なエラーが発生しました。";
+      setBasicSheetSyncError(message);
+    } finally {
+      setIsBasicFolderImporting(false);
     }
   };
 
@@ -3344,8 +3481,16 @@ export function DataEntryForm() {
                 </div>
               </div>
 
+              <input
+                ref={basicFolderInputRef}
+                type="file"
+                multiple
+                onChange={handleBasicFolderImportChange}
+                className="hidden"
+              />
+
               {/* ボタン */}
-              <div className="mt-6 flex gap-3">
+              <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={handleBasicSaveToList}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center justify-center gap-2"
@@ -3355,11 +3500,19 @@ export function DataEntryForm() {
                 </button>
                 <button
                   onClick={handleBasicWriteToSheet}
-                  disabled={isBasicSheetSaving}
+                  disabled={isBasicSheetSaving || isBasicFolderImporting}
                   className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Table2 className="w-4 h-4" />
                   {isBasicSheetSaving ? "書き込み中..." : "書き込み"}
+                </button>
+                <button
+                  onClick={handleBasicFolderImportClick}
+                  disabled={isBasicSheetSaving || isBasicFolderImporting}
+                  className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  {isBasicFolderImporting ? "読込中..." : "フォルダを読み込み"}
                 </button>
                 <button
                   onClick={handleClear}
