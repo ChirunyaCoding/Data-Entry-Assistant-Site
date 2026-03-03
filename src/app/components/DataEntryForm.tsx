@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Save,
   Upload,
@@ -34,6 +34,8 @@ interface FormData {
 }
 
 interface ResidentFormData {
+  // 共通
+  residentSelfName: string;
   // 転出
   departName: string;
   departPrefecture: string;
@@ -54,6 +56,7 @@ interface ResidentFormData {
   registryKoaza: string;
   registryBanchi: string;
   registryBuilding: string;
+  residentAlias: string;
 }
 
 interface SavedEntry extends FormData {
@@ -117,8 +120,15 @@ const INITIAL_ACTIVE_SUGGESTION_INDEX: Record<SuggestionType, number> = {
 };
 
 const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
+const SIMPLE_LOGIN_PASSED_STORAGE_KEY = "data-entry-tool.simple-login-passed.v1";
+const SIMPLE_LOGIN_NAME = "admin";
+const SIMPLE_LOGIN_PASS = "chihiro";
+const RESIDENT_SHEET_WEBHOOK_URL = (
+  import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
+).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
+const RESIDENT_SHEET_START_ROW = 6;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
   basic:
@@ -151,6 +161,7 @@ const BASIC_FIELD_ORDER = [
 
 const DETAIL_ADDRESS_FIELDS = new Set<string>(["ooaza", "aza", "koaza"]);
 const RESIDENT_FIELD_ORDER = [
+  "residentSelfName",
   "departName",
   "departPrefecture",
   "departCity",
@@ -169,6 +180,7 @@ const RESIDENT_FIELD_ORDER = [
   "registryKoaza",
   "registryBanchi",
   "registryBuilding",
+  "residentAlias",
 ] as const;
 const RESIDENT_DETAIL_ADDRESS_FIELDS = new Set<string>([
   "departOoaza",
@@ -177,7 +189,13 @@ const RESIDENT_DETAIL_ADDRESS_FIELDS = new Set<string>([
   "registryOoaza",
   "registryAza",
   "registryKoaza",
+  "residentAlias",
 ]);
+type ResidentFieldName = (typeof RESIDENT_FIELD_ORDER)[number];
+
+const isResidentFieldName = (fieldName: string): fieldName is ResidentFieldName => {
+  return RESIDENT_FIELD_ORDER.includes(fieldName as ResidentFieldName);
+};
 
 const getResidentSectionFromFieldName = (
   fieldName: string
@@ -506,7 +524,88 @@ const normalizeSheetUrl = (rawUrl: string): string => {
   }
 };
 
+interface ResidentSheetWritePayload {
+  sheetId: string;
+  startRow: number;
+  values: {
+    B: string;
+    F: string;
+    G: string;
+    H: string;
+    I: string;
+    J: string;
+    K: string;
+    L: string;
+  };
+}
+
+const extractGoogleSheetId = (sheetUrl: string): string => {
+  const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match?.[1] ?? "";
+};
+
+const joinResidentAddressForSheet = (parts: string[]): string => {
+  return parts.map((part) => part.trim()).filter(Boolean).join("");
+};
+
+const postResidentSheetPayload = async (
+  payload: ResidentSheetWritePayload
+): Promise<void> => {
+  if (!RESIDENT_SHEET_WEBHOOK_URL) {
+    throw new Error(
+      "VITE_RESIDENT_SHEET_WEBHOOK_URL が未設定のため、シート反映を実行できません。"
+    );
+  }
+
+  const requestBody = new URLSearchParams({
+    payload: JSON.stringify(payload),
+  }).toString();
+
+  const response = await fetch(RESIDENT_SHEET_WEBHOOK_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body: requestBody,
+  });
+
+  const responseText = await response.text();
+  let responseBody: { ok?: boolean; message?: string } | null = null;
+  if (responseText) {
+    try {
+      responseBody = JSON.parse(responseText) as { ok?: boolean; message?: string };
+    } catch {
+      responseBody = { message: responseText };
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      responseBody?.message ??
+        `シート反映リクエストに失敗しました（HTTP ${response.status}）`
+    );
+  }
+
+  if (responseBody && responseBody.ok === false) {
+    throw new Error(responseBody.message ?? "シート反映に失敗しました。");
+  }
+};
+
 export function DataEntryForm() {
+  const [isSimpleLoginPassed, setIsSimpleLoginPassed] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    try {
+      return window.localStorage.getItem(SIMPLE_LOGIN_PASSED_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [simpleLoginName, setSimpleLoginName] = useState("");
+  const [simpleLoginPass, setSimpleLoginPass] = useState("");
+  const [simpleLoginError, setSimpleLoginError] = useState("");
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -535,6 +634,7 @@ export function DataEntryForm() {
   });
 
   const [residentFormData, setResidentFormData] = useState<ResidentFormData>({
+    residentSelfName: "",
     departName: "",
     departPrefecture: "",
     departCity: "",
@@ -553,11 +653,15 @@ export function DataEntryForm() {
     registryKoaza: "",
     registryBanchi: "",
     registryBuilding: "",
+    residentAlias: "",
   });
 
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
+  const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
+  const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
+  const [residentSheetSyncSuccess, setResidentSheetSyncSuccess] = useState("");
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
   const [residentSheetSelection, setResidentSheetSelection] =
     useState<ResidentSheetSelection>(() => {
@@ -1026,8 +1130,7 @@ export function DataEntryForm() {
     direction: 1 | -1,
     includeDetailFields: boolean
   ) => {
-    const residentSection = getResidentSectionFromFieldName(currentName);
-    if (residentSection) {
+    if (isResidentFieldName(currentName)) {
       const nextResidentField = findNextFieldNameFromOrder(
         currentName,
         direction,
@@ -1090,7 +1193,7 @@ export function DataEntryForm() {
 
     const target = e.target as HTMLInputElement | HTMLTextAreaElement;
     const fieldName = target?.name;
-    if (!fieldName || !getResidentSectionFromFieldName(fieldName)) {
+    if (!fieldName || !isResidentFieldName(fieldName)) {
       return;
     }
 
@@ -1348,13 +1451,72 @@ export function DataEntryForm() {
     setSavedEntries((prev) => [...prev, newEntry]);
   };
 
-  const handleResidentSave = () => {
+  const handleResidentSave = async () => {
     const newEntry: SavedResidentEntry = {
       ...residentFormData,
       id: savedResidentEntries.length + 1,
       savedAt: new Date().toISOString(),
     };
     setSavedResidentEntries((prev) => [...prev, newEntry]);
+
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    const targetSheetId = extractGoogleSheetId(
+      FIXED_SHEET_URLS[residentSheetSelection]
+    );
+    if (!targetSheetId) {
+      setResidentSheetSyncError("シートIDを取得できないため、シート反映をスキップしました。");
+      return;
+    }
+
+    const departAddress = joinResidentAddressForSheet([
+      newEntry.departPrefecture,
+      newEntry.departCity,
+      newEntry.departTown,
+      newEntry.departOoaza,
+      newEntry.departAza,
+      newEntry.departKoaza,
+      newEntry.departBanchi,
+    ]);
+    const registryAddress = joinResidentAddressForSheet([
+      newEntry.registryPrefecture,
+      newEntry.registryCity,
+      newEntry.registryTown,
+      newEntry.registryOoaza,
+      newEntry.registryAza,
+      newEntry.registryKoaza,
+      newEntry.registryBanchi,
+    ]);
+
+    const payload: ResidentSheetWritePayload = {
+      sheetId: targetSheetId,
+      startRow: RESIDENT_SHEET_START_ROW,
+      values: {
+        B: newEntry.residentSelfName,
+        F: newEntry.departName,
+        G: departAddress,
+        H: newEntry.departBuilding,
+        I: newEntry.registryName,
+        J: registryAddress,
+        K: newEntry.registryBuilding,
+        L: newEntry.residentAlias,
+      },
+    };
+
+    setIsResidentSheetSaving(true);
+    try {
+      await postResidentSheetPayload(payload);
+      setResidentSheetSyncSuccess("シートへ反映しました。");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "シート反映中に不明なエラーが発生しました。";
+      setResidentSheetSyncError(message);
+    } finally {
+      setIsResidentSheetSaving(false);
+    }
   };
 
   const handleClear = () => {
@@ -1381,6 +1543,7 @@ export function DataEntryForm() {
       setPhoneInputMode("mobile");
     } else {
       setResidentFormData({
+        residentSelfName: "",
         departName: "",
         departPrefecture: "",
         departCity: "",
@@ -1399,6 +1562,7 @@ export function DataEntryForm() {
         registryKoaza: "",
         registryBanchi: "",
         registryBuilding: "",
+        residentAlias: "",
       });
     }
   };
@@ -1467,6 +1631,7 @@ export function DataEntryForm() {
     const tsvData = savedResidentEntries
       .map((entry) => {
         return [
+          entry.residentSelfName,
           entry.departName,
           entry.departPrefecture,
           entry.departCity,
@@ -1485,6 +1650,7 @@ export function DataEntryForm() {
           entry.registryKoaza,
           entry.registryBanchi,
           entry.registryBuilding,
+          entry.residentAlias,
         ].join("\t");
       })
       .join("\n");
@@ -1508,6 +1674,87 @@ export function DataEntryForm() {
       }
     }
   };
+
+  const handleSimpleLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const isValidCredential =
+      simpleLoginName.trim() === SIMPLE_LOGIN_NAME &&
+      simpleLoginPass === SIMPLE_LOGIN_PASS;
+    if (!isValidCredential) {
+      setSimpleLoginError("name または pass が正しくありません。");
+      return;
+    }
+
+    setSimpleLoginError("");
+    setIsSimpleLoginPassed(true);
+
+    try {
+      window.localStorage.setItem(SIMPLE_LOGIN_PASSED_STORAGE_KEY, "true");
+    } catch {
+      // 保存に失敗した場合はメモリ上の値を使う
+    }
+  };
+
+  if (!isSimpleLoginPassed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl text-gray-900">データ入力補助ツール</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            初回利用時のみ簡易ログインが必要です。
+          </p>
+          <form className="mt-5 space-y-3" onSubmit={handleSimpleLogin}>
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">name</label>
+              <input
+                type="text"
+                value={simpleLoginName}
+                onChange={(event) => {
+                  setSimpleLoginName(event.target.value);
+                  if (simpleLoginError) {
+                    setSimpleLoginError("");
+                  }
+                }}
+                autoComplete="username"
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="name を入力"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">pass</label>
+              <input
+                type="password"
+                value={simpleLoginPass}
+                onChange={(event) => {
+                  setSimpleLoginPass(event.target.value);
+                  if (simpleLoginError) {
+                    setSimpleLoginError("");
+                  }
+                }}
+                autoComplete="current-password"
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="pass を入力"
+                required
+              />
+            </div>
+            {simpleLoginError && (
+              <p className="text-sm text-red-600" role="alert">
+                {simpleLoginError}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="w-full px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            >
+              ログイン
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex bg-gray-50">
@@ -2204,6 +2451,20 @@ export function DataEntryForm() {
                 className="space-y-4"
                 onKeyDown={handleResidentFormNavigation}
               >
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1.5">
+                    自分の名前（B列）
+                  </label>
+                  <input
+                    type="text"
+                    name="residentSelfName"
+                    value={residentFormData.residentSelfName}
+                    onChange={handleResidentChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="自分の名前を入力"
+                  />
+                </div>
+
                 {/* 2列レイアウト - 転出と本籍を並列表示 */}
                 <div className="grid grid-cols-2 gap-6">
                   {/* 左列：転出 */}
@@ -2968,6 +3229,24 @@ export function DataEntryForm() {
                         placeholder="本籍建物名を入力"
                       />
                     </div>
+
+                    {/* 通称・別名 */}
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        通称・別名
+                      </label>
+                      <input
+                        type="text"
+                        name="residentAlias"
+                        value={residentFormData.residentAlias}
+                        onChange={handleResidentChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="通称・別名を入力"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        本籍の建物名から移動する場合は Shift+Enter を押してください。
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2976,10 +3255,11 @@ export function DataEntryForm() {
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={handleResidentSave}
-                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center justify-center gap-2"
+                  disabled={isResidentSheetSaving}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  {isResidentSheetSaving ? "保存中..." : "保存"}
                 </button>
                 <button
                   onClick={handleClear}
@@ -2995,6 +3275,12 @@ export function DataEntryForm() {
                   コピー
                 </button>
               </div>
+              {residentSheetSyncSuccess && (
+                <p className="mt-2 text-sm text-green-700">{residentSheetSyncSuccess}</p>
+              )}
+              {residentSheetSyncError && (
+                <p className="mt-2 text-sm text-red-600">{residentSheetSyncError}</p>
+              )}
 
               {/* 保存済みリスト */}
               <div className="mt-8">
@@ -3012,6 +3298,9 @@ export function DataEntryForm() {
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
+                            <div className="mb-3 text-xs text-gray-600">
+                              自分の名前: {entry.residentSelfName || "—"}
+                            </div>
                             {/* 転出情報 */}
                             <div className="mb-3 pb-3 border-b border-gray-200">
                               <div className="flex items-center gap-2 mb-2">
@@ -3056,6 +3345,7 @@ export function DataEntryForm() {
                                     entry.registryBuilding
                                   ].filter(Boolean).join(" ") || "—"}
                                 </div>
+                                <div>通称・別名: {entry.residentAlias || "—"}</div>
                               </div>
                             </div>
                           </div>
