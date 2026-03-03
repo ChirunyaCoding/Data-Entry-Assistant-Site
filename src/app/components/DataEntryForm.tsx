@@ -132,6 +132,7 @@ const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
 const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
   "data-entry-tool.resident-target-sheet-name.v1";
 const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1";
+const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
@@ -350,6 +351,44 @@ const formatBanchiValue = (rawValue: string): string => {
   return fullWidthAlphaNumeric.replace(/[-‐‑‒–—―ｰ]/g, "－");
 };
 
+const AREA_FIELD_PREFIXES = {
+  ooaza: "大字",
+  aza: "字",
+  koaza: "小字",
+  departOoaza: "大字",
+  departAza: "字",
+  departKoaza: "小字",
+  registryOoaza: "大字",
+  registryAza: "字",
+  registryKoaza: "小字",
+} as const;
+
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+const formatAreaFieldValue = (fieldName: string, rawValue: string): string => {
+  const prefix = AREA_FIELD_PREFIXES[fieldName as keyof typeof AREA_FIELD_PREFIXES];
+  if (!prefix) {
+    return rawValue;
+  }
+
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const normalizedBody = trimmed.replace(
+    new RegExp(`^(?:${escapeRegExp(prefix)}[\\s　]*)+`),
+    ""
+  );
+  if (!normalizedBody) {
+    return "";
+  }
+
+  return `${prefix}${normalizedBody}`;
+};
+
 
 const normalizeBuildingValue = (rawValue: string): string => {
   return toFullWidthAlphabet(toHalfWidthDigits(rawValue));
@@ -547,9 +586,39 @@ interface ResidentSheetWritePayload {
   };
 }
 
+interface BasicSheetWritePayload {
+  action: "appendBasicRow";
+  sheetId: string;
+  sheetName: string;
+  startRow: number;
+  values: {
+    A: string;
+    B: string;
+    C: string;
+    D: string;
+    E: string;
+    F: string;
+    G: string;
+    H: string;
+    I: string;
+    J: string;
+  };
+}
+
 interface ResidentSheetListPayload {
   action: "listSheets";
   sheetId: string;
+}
+
+interface SheetClearPayload {
+  action: "clearSheetRange";
+  sheetId: string;
+  sheetName: string;
+  startRow: number;
+  endRow: number;
+  clearAllColumns: boolean;
+  startColumn?: number;
+  endColumn?: number;
 }
 
 interface SpreadsheetSheetTab {
@@ -562,6 +631,7 @@ interface ResidentSheetWebhookResponse {
   row?: number;
   sheetName?: string;
   sheetId?: string;
+  clearedRange?: string;
   sheets?: SpreadsheetSheetTab[];
   message?: string;
 }
@@ -592,9 +662,15 @@ const joinResidentAddressForSheet = (parts: string[]): string => {
   return parts.map((part) => part.trim()).filter(Boolean).join("");
 };
 
+const joinBasicAddressForSheet = (parts: string[]): string => {
+  return parts.map((part) => part.trim()).filter(Boolean).join("");
+};
+
 type ResidentSheetWebhookPayload =
   | ResidentSheetWritePayload
-  | ResidentSheetListPayload;
+  | ResidentSheetListPayload
+  | BasicSheetWritePayload
+  | SheetClearPayload;
 
 const postResidentSheetWebhook = async (
   payload: ResidentSheetWebhookPayload
@@ -702,6 +778,20 @@ const postResidentSheetPayload = async (
   return responseBody;
 };
 
+const postBasicSheetPayload = async (
+  payload: BasicSheetWritePayload
+): Promise<ResidentSheetWebhookResponse> => {
+  const responseBody = await postResidentSheetWebhook(payload);
+
+  if (responseBody.sheetName !== payload.sheetName) {
+    throw new Error(
+      "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+    );
+  }
+
+  return responseBody;
+};
+
 export function DataEntryForm() {
   const [isSimpleLoginPassed, setIsSimpleLoginPassed] = useState<boolean>(() => {
     if (typeof window === "undefined") {
@@ -772,9 +862,15 @@ export function DataEntryForm() {
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
+  const [isBasicSheetSaving, setIsBasicSheetSaving] = useState(false);
+  const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
+  const [basicSheetSyncSuccess, setBasicSheetSyncSuccess] = useState("");
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
   const [residentSheetSyncSuccess, setResidentSheetSyncSuccess] = useState("");
+  const [isSheetInitializing, setIsSheetInitializing] = useState(false);
+  const [sheetInitializeError, setSheetInitializeError] = useState("");
+  const [sheetInitializeSuccess, setSheetInitializeSuccess] = useState("");
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
   const [residentSheetSelection, setResidentSheetSelection] =
     useState<ResidentSheetSelection>(() => {
@@ -865,6 +961,11 @@ export function DataEntryForm() {
   const activeSheetTabError = activeSheetId
     ? sheetTabErrorBySheetId[activeSheetId] ?? ""
     : "";
+  const isInitializeButtonDisabled =
+    isSheetInitializing ||
+    isActiveSheetTabLoading ||
+    activeSheetTabs.length === 0 ||
+    !activeSelectedSheetName;
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const residentSheetSelectionMessage =
     mode === "basic"
@@ -1332,6 +1433,14 @@ export function DataEntryForm() {
       return;
     }
 
+    if (name === "ooaza" || name === "aza" || name === "koaza") {
+      setFormData((prev) => ({
+        ...prev,
+        [name]: formatAreaFieldValue(name, value),
+      }));
+      return;
+    }
+
     if (name === "banchi") {
       setFormData((prev) => ({
         ...prev,
@@ -1712,6 +1821,21 @@ export function DataEntryForm() {
       return;
     }
 
+    if (
+      name === "departOoaza" ||
+      name === "departAza" ||
+      name === "departKoaza" ||
+      name === "registryOoaza" ||
+      name === "registryAza" ||
+      name === "registryKoaza"
+    ) {
+      setResidentFormData((prev) => ({
+        ...prev,
+        [name]: formatAreaFieldValue(name, value),
+      }));
+      return;
+    }
+
     setResidentFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -1737,7 +1861,17 @@ export function DataEntryForm() {
     }
   };
 
-  const handleSave = () => {
+  const createBasicEntryFromForm = () => {
+    return {
+      ...formData,
+      operator: settings.isOperatorFixed
+        ? settings.fixedOperatorName
+        : formData.operator,
+    };
+  };
+
+  const handleBasicSaveToList = () => {
+    const basicEntry = createBasicEntryFromForm();
     const savedAt = new Date().toISOString();
     setSavedEntries((prev) => {
       const nextId =
@@ -1745,13 +1879,100 @@ export function DataEntryForm() {
           ? 1
           : Math.max(...prev.map((entry) => entry.id)) + 1;
       const newEntry: SavedEntry = {
-        ...formData,
+        ...basicEntry,
         id: nextId,
         savedAt,
       };
       return [...prev, newEntry];
     });
+
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
     handleClear();
+  };
+
+  const handleBasicWriteToSheet = async () => {
+    const basicEntry = createBasicEntryFromForm();
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
+
+    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.basic);
+    if (!targetSheetId) {
+      setBasicSheetSyncError(
+        "シートIDを取得できないため、シート反映をスキップしました。"
+      );
+      return;
+    }
+
+    if (sheetTabLoadingBySheetId[targetSheetId]) {
+      setBasicSheetSyncError(
+        "シートタブ一覧を取得中です。少し待ってから書き込みしてください。"
+      );
+      return;
+    }
+
+    const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
+    if (tabLoadError) {
+      setBasicSheetSyncError(
+        `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
+      );
+      return;
+    }
+
+    const normalizedTargetSheetName = (
+      selectedSheetTabBySheetId[targetSheetId] ?? ""
+    ).trim();
+    if (!normalizedTargetSheetName) {
+      setBasicSheetSyncError("書き込み先シートを選択してください。");
+      return;
+    }
+
+    const integratedAddress = joinBasicAddressForSheet([
+      basicEntry.prefecture,
+      basicEntry.city,
+      basicEntry.town,
+      basicEntry.ooaza,
+      basicEntry.aza,
+      basicEntry.koaza,
+      basicEntry.banchi,
+    ]);
+
+    const payload: BasicSheetWritePayload = {
+      action: "appendBasicRow",
+      sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
+      startRow: BASIC_SHEET_START_ROW,
+      values: {
+        A: basicEntry.operator,
+        B: basicEntry.filename,
+        C: basicEntry.postalCode,
+        D: integratedAddress,
+        E: basicEntry.building,
+        F: basicEntry.company,
+        G: basicEntry.position,
+        H: basicEntry.name,
+        I: basicEntry.phone,
+        J: basicEntry.notes,
+      },
+    };
+
+    setIsBasicSheetSaving(true);
+    try {
+      const result = await postBasicSheetPayload(payload);
+      const successMessage =
+        typeof result.row === "number"
+          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+          : `シート「${normalizedTargetSheetName}」へ反映しました。`;
+      setBasicSheetSyncSuccess(successMessage);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "シート反映中に不明なエラーが発生しました。";
+      setBasicSheetSyncError(message);
+    } finally {
+      setIsBasicSheetSaving(false);
+    }
   };
 
   const createResidentEntryFromForm = () => {
@@ -1871,6 +2092,112 @@ export function DataEntryForm() {
       setResidentSheetSyncError(message);
     } finally {
       setIsResidentSheetSaving(false);
+    }
+  };
+
+  const handleInitializeActiveSheet = async () => {
+    if (!activeSheetId) {
+      setSheetInitializeError("シートIDを取得できないため、初期化できません。");
+      setSheetInitializeSuccess("");
+      return;
+    }
+
+    if (isActiveSheetTabLoading) {
+      setSheetInitializeError(
+        "シートタブ一覧を取得中です。少し待ってから初期化してください。"
+      );
+      setSheetInitializeSuccess("");
+      return;
+    }
+
+    if (activeSheetTabError) {
+      setSheetInitializeError(
+        `シートタブ一覧を取得できないため初期化できません。${activeSheetTabError}`
+      );
+      setSheetInitializeSuccess("");
+      return;
+    }
+
+    const targetSheetName = activeSelectedSheetName.trim();
+    if (!targetSheetName) {
+      setSheetInitializeError("初期化対象のシートを選択してください。");
+      setSheetInitializeSuccess("");
+      return;
+    }
+
+    const clearConfig =
+      mode === "basic"
+        ? {
+            startRow: 5,
+            endRow: 1000,
+            clearAllColumns: true,
+            startColumn: undefined,
+            endColumn: undefined,
+            description: "全列 5行目から1000行目",
+          }
+        : residentSheetSelection === "residentSecondary"
+          ? {
+              startRow: 3,
+              endRow: 1000,
+              clearAllColumns: false,
+              startColumn: 2,
+              endColumn: 3,
+              description: "B3:C1000",
+            }
+          : {
+              startRow: 6,
+              endRow: 1000,
+              clearAllColumns: true,
+              startColumn: undefined,
+              endColumn: undefined,
+              description: "全列 6行目から1000行目",
+            };
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `シート「${targetSheetName}」の${clearConfig.description}を初期化します。よろしいですか？`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setSheetInitializeError("");
+    setSheetInitializeSuccess("");
+
+    const payload: SheetClearPayload = {
+      action: "clearSheetRange",
+      sheetId: activeSheetId,
+      sheetName: targetSheetName,
+      startRow: clearConfig.startRow,
+      endRow: clearConfig.endRow,
+      clearAllColumns: clearConfig.clearAllColumns,
+      startColumn: clearConfig.startColumn,
+      endColumn: clearConfig.endColumn,
+    };
+
+    setIsSheetInitializing(true);
+    try {
+      const result = await postResidentSheetWebhook(payload);
+      if (result.sheetName && result.sheetName !== targetSheetName) {
+        throw new Error(
+          "Webhook応答の sheetName が不一致です。Apps Scriptを最新コードへ更新してください。"
+        );
+      }
+
+      setSheetInitializeSuccess(
+        result.clearedRange
+          ? `シート「${targetSheetName}」の${result.clearedRange}を初期化しました。`
+          : `シート「${targetSheetName}」を初期化しました。`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "初期化中に不明なエラーが発生しました。";
+      setSheetInitializeError(message);
+    } finally {
+      setIsSheetInitializing(false);
     }
   };
 
@@ -2768,11 +3095,19 @@ export function DataEntryForm() {
               {/* ボタン */}
               <div className="mt-6 flex gap-3">
                 <button
-                  onClick={handleSave}
+                  onClick={handleBasicSaveToList}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  リストへ保存
+                </button>
+                <button
+                  onClick={handleBasicWriteToSheet}
+                  disabled={isBasicSheetSaving}
+                  className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Table2 className="w-4 h-4" />
+                  {isBasicSheetSaving ? "書き込み中..." : "書き込み"}
                 </button>
                 <button
                   onClick={handleClear}
@@ -2788,6 +3123,12 @@ export function DataEntryForm() {
                   コピー
                 </button>
               </div>
+              {basicSheetSyncSuccess && (
+                <p className="mt-2 text-sm text-green-700">{basicSheetSyncSuccess}</p>
+              )}
+              {basicSheetSyncError && (
+                <p className="mt-2 text-sm text-red-600">{basicSheetSyncError}</p>
+              )}
 
               {/* 保存済みリスト */}
               <div className="mt-8">
@@ -3938,30 +4279,40 @@ export function DataEntryForm() {
                 <label className="block text-xs text-gray-600 mb-1">
                   {mode === "resident" ? "表示/書き込み先シート" : "表示シート"}
                 </label>
-                <select
-                  value={activeSelectedSheetName}
-                  onChange={(event) =>
-                    handleActiveSheetTabSelectionChange(event.target.value)
-                  }
-                  disabled={isActiveSheetTabLoading || activeSheetTabs.length === 0}
-                  className="w-full px-3 py-2 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-100 disabled:text-gray-500"
-                >
-                  <option value="">
-                    {isActiveSheetTabLoading
-                      ? "シートタブを取得中..."
-                      : activeSheetTabs.length === 0
-                        ? "シートタブを取得できません"
-                        : "表示シートを選択"}
-                  </option>
-                  {activeSheetTabs.map((sheet) => (
-                    <option
-                      key={`${sheet.gid}-${sheet.name}`}
-                      value={sheet.name}
-                    >
-                      {sheet.name}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={activeSelectedSheetName}
+                    onChange={(event) =>
+                      handleActiveSheetTabSelectionChange(event.target.value)
+                    }
+                    disabled={isActiveSheetTabLoading || activeSheetTabs.length === 0}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                  >
+                    <option value="">
+                      {isActiveSheetTabLoading
+                        ? "シートタブを取得中..."
+                        : activeSheetTabs.length === 0
+                          ? "シートタブを取得できません"
+                          : "表示シートを選択"}
                     </option>
-                  ))}
-                </select>
+                    {activeSheetTabs.map((sheet) => (
+                      <option
+                        key={`${sheet.gid}-${sheet.name}`}
+                        value={sheet.name}
+                      >
+                        {sheet.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleInitializeActiveSheet}
+                    disabled={isInitializeButtonDisabled}
+                    className="px-4 py-2 rounded bg-red-600 text-white text-sm hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed"
+                  >
+                    {isSheetInitializing ? "初期化中..." : "初期化"}
+                  </button>
+                </div>
                 {mode === "resident" && (
                   <p className="mt-1 text-xs text-gray-500">
                     住民票書き込み時は、選択中のシートタブへ追記します。
@@ -3969,6 +4320,12 @@ export function DataEntryForm() {
                 )}
                 {activeSheetTabError && (
                   <p className="mt-1 text-xs text-red-600">{activeSheetTabError}</p>
+                )}
+                {sheetInitializeSuccess && (
+                  <p className="mt-1 text-xs text-green-700">{sheetInitializeSuccess}</p>
+                )}
+                {sheetInitializeError && (
+                  <p className="mt-1 text-xs text-red-600">{sheetInitializeError}</p>
                 )}
               </div>
             </div>

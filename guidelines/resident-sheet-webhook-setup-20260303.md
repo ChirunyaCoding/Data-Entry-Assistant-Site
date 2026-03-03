@@ -1,4 +1,4 @@
-# 住民票シートWebhook設定手順（2026-03-03）
+# シートWebhook設定手順（2026-03-03）
 
 ## 1. Apps Script を作成
 Google Apps Script で以下を `Code.gs` に配置し、Webアプリとしてデプロイしてください。
@@ -8,13 +8,22 @@ function doPost(e) {
   try {
     var raw = e.parameter.payload || "{}";
     var payload = JSON.parse(raw);
-    var action = String(payload.action || "appendRow").trim();
+    var action = String(payload.action || "appendResidentRow").trim();
 
     if (action === "listSheets") {
       return handleListSheets(payload);
     }
+    if (action === "clearSheetRange") {
+      return handleClearSheetRange(payload);
+    }
+    if (action === "appendBasicRow") {
+      return handleAppendBasicRow(payload);
+    }
+    if (action === "appendResidentRow" || action === "appendRow") {
+      return handleAppendResidentRow(payload);
+    }
 
-    return handleAppendRow(payload);
+    return jsonResponse({ ok: false, message: "未対応の action です: " + action });
   } catch (error) {
     return jsonResponse({ ok: false, message: String(error) });
   }
@@ -41,7 +50,104 @@ function handleListSheets(payload) {
   });
 }
 
-function handleAppendRow(payload) {
+function handleClearSheetRange(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  var sheetName = String(payload.sheetName || "").trim();
+  var startRow = Number(payload.startRow || 1);
+  var endRow = Number(payload.endRow || startRow);
+  var clearAllColumns = Boolean(payload.clearAllColumns);
+  var startColumn = Number(payload.startColumn || 1);
+  var endColumn = Number(payload.endColumn || startColumn);
+
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+  if (!sheetName) {
+    return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+  }
+  if (startRow < 1 || endRow < startRow) {
+    return jsonResponse({ ok: false, message: "行範囲が不正です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return jsonResponse({
+      ok: false,
+      message: "指定されたシート名が見つかりません: " + sheetName
+    });
+  }
+
+  var rowCount = endRow - startRow + 1;
+  var clearedRange;
+  if (clearAllColumns) {
+    var maxColumns = sheet.getMaxColumns();
+    sheet.getRange(startRow, 1, rowCount, maxColumns).clearContent();
+    clearedRange = "A" + startRow + ":" + columnToLetter(maxColumns) + endRow;
+  } else {
+    if (startColumn < 1 || endColumn < startColumn) {
+      return jsonResponse({ ok: false, message: "列範囲が不正です" });
+    }
+    var columnCount = endColumn - startColumn + 1;
+    sheet.getRange(startRow, startColumn, rowCount, columnCount).clearContent();
+    clearedRange =
+      columnToLetter(startColumn) +
+      startRow +
+      ":" +
+      columnToLetter(endColumn) +
+      endRow;
+  }
+
+  return jsonResponse({
+    ok: true,
+    sheetName: sheetName,
+    clearedRange: clearedRange,
+  });
+}
+
+function handleAppendBasicRow(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  var sheetName = String(payload.sheetName || "").trim();
+  var startRow = Number(payload.startRow || 5);
+  var values = payload.values || {};
+
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+  if (!sheetName) {
+    return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return jsonResponse({
+      ok: false,
+      message: "指定されたシート名が見つかりません: " + sheetName
+    });
+  }
+
+  var lastRow = sheet.getLastRow();
+  var nextRow = Math.max(startRow, lastRow + 1);
+
+  sheet.getRange(nextRow, 1).setValue(values.A || "");  // A
+  sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
+  sheet.getRange(nextRow, 3).setValue(values.C || "");  // C
+  sheet.getRange(nextRow, 4).setValue(values.D || "");  // D
+  sheet.getRange(nextRow, 5).setValue(values.E || "");  // E
+  sheet.getRange(nextRow, 6).setValue(values.F || "");  // F
+  sheet.getRange(nextRow, 7).setValue(values.G || "");  // G
+  sheet.getRange(nextRow, 8).setValue(values.H || "");  // H
+  sheet.getRange(nextRow, 9).setValue(values.I || "");  // I
+  sheet.getRange(nextRow, 10).setValue(values.J || ""); // J
+
+  // 書き込み時の表示書式を統一（メイリオ / 10）
+  sheet.getRange(nextRow, 1, 1, 10).setFontFamily("Meiryo").setFontSize(10);
+
+  return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
+}
+
+function handleAppendResidentRow(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 6);
@@ -82,6 +188,17 @@ function handleAppendRow(payload) {
   return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
 
+function columnToLetter(column) {
+  var letter = "";
+  var temp = column;
+  while (temp > 0) {
+    var remainder = (temp - 1) % 26;
+    letter = String.fromCharCode(65 + remainder) + letter;
+    temp = Math.floor((temp - 1) / 26);
+  }
+  return letter;
+}
+
 function jsonResponse(body) {
   return ContentService
     .createTextOutput(JSON.stringify(body))
@@ -97,8 +214,12 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 ```
 
 ## 3. 反映確認
-住民票モードで書き込み先シートを選択して `書き込み` を押し、
-`シート「xxx」のn行目へ反映しました。` が表示されることを確認します。
+- 住民票モード: 書き込み先シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。
+- 基本モード: 表示シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。
 
-## 4. タブ選択確認
-シート画面または住民票入力画面の選択欄で、同一スプレッドシート内のシート名が取得できることを確認します。
+## 4. 初期化確認
+- シート選択UIの `初期化` を押し、対象レンジがクリアされること。
+- クリア対象ルール:
+  - 基本モード: 全列 `5` 行目から `1000` 行目
+  - 住民票モード（住民票シート1）: 全列 `6` 行目から `1000` 行目
+  - 住民票モード（住民票シート2）: `B3:C1000`
