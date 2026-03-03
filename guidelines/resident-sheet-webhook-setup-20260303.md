@@ -185,8 +185,8 @@ function handleAppendBasicFileNameRows(payload) {
     return [String(name || "")];
   });
 
-  var lastRow = sheet.getLastRow();
-  var nextRow = Math.max(startRow, lastRow + 1);
+  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 2, 1);
+  ensureRowsForWrite(sheet, nextRow, values.length);
   sheet.getRange(nextRow, 2, values.length, 1).setValues(values); // B列
   sheet.getRange(nextRow, 2, values.length, 1).setFontFamily("Meiryo").setFontSize(10);
 
@@ -272,8 +272,8 @@ function handleAppendResidentFolderRows(payload) {
     return jsonResponse({ ok: false, message: "書き込み対象データがありません" });
   }
 
-  var lastRow = sheet.getLastRow();
-  var nextRow = Math.max(startRow, lastRow + 1);
+  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 3, 3);
+  ensureRowsForWrite(sheet, nextRow, values.length);
   sheet.getRange(nextRow, 3, values.length, 3).setValues(values); // C:D:E
   sheet.getRange(nextRow, 3, values.length, 3).setFontFamily("Meiryo").setFontSize(10);
 
@@ -315,8 +315,8 @@ function handleAppendResidentSecondaryRows(payload) {
     return [String(row.B || ""), String(row.C || "")];
   });
 
-  var lastRow = sheet.getLastRow();
-  var nextRow = Math.max(startRow, lastRow + 1);
+  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 2, 2);
+  ensureRowsForWrite(sheet, nextRow, values.length);
   sheet.getRange(nextRow, 2, values.length, 2).setValues(values); // B:C
   sheet.getRange(nextRow, 2, values.length, 2).setFontFamily("Meiryo").setFontSize(10);
 
@@ -327,6 +327,38 @@ function handleAppendResidentSecondaryRows(payload) {
     startRow: nextRow,
     endRow: nextRow + values.length - 1,
   });
+}
+
+function findFirstEmptyRowInColumns(sheet, startRow, startColumn, columnCount) {
+  var maxRows = sheet.getMaxRows();
+  if (startRow > maxRows) {
+    return startRow;
+  }
+
+  var rowCount = maxRows - startRow + 1;
+  var values = sheet
+    .getRange(startRow, startColumn, rowCount, columnCount)
+    .getDisplayValues();
+
+  for (var i = 0; i < values.length; i++) {
+    var rowValues = values[i];
+    var hasValue = rowValues.some(function (value) {
+      return String(value || "").trim() !== "";
+    });
+    if (!hasValue) {
+      return startRow + i;
+    }
+  }
+
+  return maxRows + 1;
+}
+
+function ensureRowsForWrite(sheet, startRow, rowCount) {
+  var requiredLastRow = startRow + rowCount - 1;
+  var maxRows = sheet.getMaxRows();
+  if (requiredLastRow > maxRows) {
+    sheet.insertRowsAfter(maxRows, requiredLastRow - maxRows);
+  }
 }
 
 function columnToLetter(column) {
