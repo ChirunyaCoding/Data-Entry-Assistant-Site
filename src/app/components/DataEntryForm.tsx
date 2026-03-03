@@ -128,6 +128,8 @@ const RESIDENT_SHEET_WEBHOOK_URL = (
 ).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
+const RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
+  "data-entry-tool.resident-target-sheet-name.v1";
 const RESIDENT_SHEET_START_ROW = 6;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
@@ -526,6 +528,7 @@ const normalizeSheetUrl = (rawUrl: string): string => {
 
 interface ResidentSheetWritePayload {
   sheetId: string;
+  sheetName: string;
   startRow: number;
   values: {
     B: string;
@@ -697,6 +700,18 @@ export function DataEntryForm() {
         return "residentPrimary";
       }
     });
+  const [residentTargetSheetName, setResidentTargetSheetName] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    try {
+      return (
+        window.localStorage.getItem(RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY) ?? ""
+      );
+    } catch {
+      return "";
+    }
+  });
   const activeSheetUrl =
     mode === "basic"
       ? FIXED_SHEET_URLS.basic
@@ -895,6 +910,21 @@ export function DataEntryForm() {
       // 保存に失敗した場合はメモリ上の値を使う
     }
   }, [residentSheetSelection]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY,
+        residentTargetSheetName
+      );
+    } catch {
+      // 保存に失敗した場合はメモリ上の値を使う
+    }
+  }, [residentTargetSheetName]);
 
   useEffect(() => {
     if (!settings.isOperatorFixed) {
@@ -1487,6 +1517,12 @@ export function DataEntryForm() {
       return;
     }
 
+    const normalizedTargetSheetName = residentTargetSheetName.trim();
+    if (!normalizedTargetSheetName) {
+      setResidentSheetSyncError("書き込み先シート名を入力してください。");
+      return;
+    }
+
     const departAddress = joinResidentAddressForSheet([
       newEntry.departPrefecture,
       newEntry.departCity,
@@ -1508,6 +1544,7 @@ export function DataEntryForm() {
 
     const payload: ResidentSheetWritePayload = {
       sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
       values: {
         B: newEntry.residentSelfName,
@@ -1526,8 +1563,8 @@ export function DataEntryForm() {
       const result = await postResidentSheetPayload(payload);
       const successMessage =
         typeof result.row === "number"
-          ? `シートへ反映しました（${result.row}行目）。`
-          : "シートへ反映しました。";
+          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+          : `シート「${normalizedTargetSheetName}」へ反映しました。`;
       setResidentSheetSyncSuccess(successMessage);
     } catch (error) {
       const message =
@@ -2472,6 +2509,22 @@ export function DataEntryForm() {
                 className="space-y-4"
                 onKeyDown={handleResidentFormNavigation}
               >
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1.5">
+                    書き込み先シート名
+                  </label>
+                  <input
+                    type="text"
+                    value={residentTargetSheetName}
+                    onChange={(event) => setResidentTargetSheetName(event.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="例: 住民票入力"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    住民票保存時は、このシートタブ名へ追記します。
+                  </p>
+                </div>
+
                 <div>
                   <label className="block text-sm text-gray-700 mb-1.5">
                     自分の名前（B列）
@@ -3477,6 +3530,20 @@ export function DataEntryForm() {
                   </>
                 )}
               </div>
+              {mode === "resident" && (
+                <div className="mt-2">
+                  <label className="block text-xs text-gray-600 mb-1">
+                    書き込み先シート名
+                  </label>
+                  <input
+                    type="text"
+                    value={residentTargetSheetName}
+                    onChange={(event) => setResidentTargetSheetName(event.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="例: 住民票入力"
+                  />
+                </div>
+              )}
               <p className="text-xs text-gray-500 mt-1 break-all">
                 表示URL: {activeSheetUrl}
               </p>

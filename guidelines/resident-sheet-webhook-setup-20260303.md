@@ -10,15 +10,25 @@ function doPost(e) {
     var payload = JSON.parse(raw);
 
     var sheetId = String(payload.sheetId || "").trim();
+    var sheetName = String(payload.sheetName || "").trim();
     var startRow = Number(payload.startRow || 6);
     var values = payload.values || {};
 
     if (!sheetId) {
       return jsonResponse({ ok: false, message: "sheetId が未指定です" });
     }
+    if (!sheetName) {
+      return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+    }
 
     var ss = SpreadsheetApp.openById(sheetId);
-    var sheet = ss.getSheets()[0];
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      return jsonResponse({
+        ok: false,
+        message: "指定されたシート名が見つかりません: " + sheetName
+      });
+    }
 
     var lastRow = sheet.getLastRow();
     var nextRow = Math.max(startRow, lastRow + 1);
@@ -53,4 +63,5 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 ```
 
 ## 3. 反映確認
-住民票モードで `保存` を押し、`シートへ反映しました。` が表示されることを確認します。
+住民票モードで書き込み先シート名を入力して `保存` を押し、
+`シート「xxx」のn行目へ反映しました。` が表示されることを確認します。
