@@ -3551,18 +3551,6 @@ export function DataEntryForm() {
                   />
                 </div>
               )}
-              <p className="text-xs text-gray-500 mt-1 break-all">
-                表示URL: {activeSheetUrl}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                ※ 基本モードは固定URL、住民票モードは2つの固定URLのみ切替できます
-              </p>
-              <p className="text-xs text-gray-500">
-                ※ スプレッドシートを「リンクを知っている全員」に共有設定してください
-              </p>
-              <p className="text-xs text-gray-500">
-                ※ 編集にはGoogle側で編集権限が必要です（URLは /edit 形式を推奨）
-              </p>
             </div>
           )}
         </div>
