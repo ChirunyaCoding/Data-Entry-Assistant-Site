@@ -128,8 +128,9 @@ const RESIDENT_SHEET_WEBHOOK_URL = (
 ).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
-const RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
+const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
   "data-entry-tool.resident-target-sheet-name.v1";
+const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1";
 const RESIDENT_SHEET_START_ROW = 6;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
@@ -239,6 +240,8 @@ type PhoneInputMode = "mobile" | "landline";
 interface AppSettings {
   isOperatorFixed: boolean;
   fixedOperatorName: string;
+  isResidentSelfNameFixed: boolean;
+  fixedResidentSelfName: string;
 }
 
 const formatPostalCode = (rawValue: string): string => {
@@ -542,10 +545,22 @@ interface ResidentSheetWritePayload {
   };
 }
 
+interface ResidentSheetListPayload {
+  action: "listSheets";
+  sheetId: string;
+}
+
+interface SpreadsheetSheetTab {
+  name: string;
+  gid: string;
+}
+
 interface ResidentSheetWebhookResponse {
   ok: boolean;
   row?: number;
   sheetName?: string;
+  sheetId?: string;
+  sheets?: SpreadsheetSheetTab[];
   message?: string;
 }
 
@@ -554,12 +569,33 @@ const extractGoogleSheetId = (sheetUrl: string): string => {
   return match?.[1] ?? "";
 };
 
+const buildSheetUrlWithGid = (rawUrl: string, gid: string | undefined): string => {
+  const normalizedUrl = normalizeSheetUrl(rawUrl);
+  if (!normalizedUrl) {
+    return "";
+  }
+
+  try {
+    const parsedUrl = new URL(normalizedUrl);
+    if (gid) {
+      parsedUrl.searchParams.set("gid", gid);
+    }
+    return parsedUrl.toString();
+  } catch {
+    return normalizedUrl;
+  }
+};
+
 const joinResidentAddressForSheet = (parts: string[]): string => {
   return parts.map((part) => part.trim()).filter(Boolean).join("");
 };
 
-const postResidentSheetPayload = async (
-  payload: ResidentSheetWritePayload
+type ResidentSheetWebhookPayload =
+  | ResidentSheetWritePayload
+  | ResidentSheetListPayload;
+
+const postResidentSheetWebhook = async (
+  payload: ResidentSheetWebhookPayload
 ): Promise<ResidentSheetWebhookResponse> => {
   if (!RESIDENT_SHEET_WEBHOOK_URL) {
     throw new Error(
@@ -606,8 +642,54 @@ const postResidentSheetPayload = async (
   }
 
   if (responseBody.ok !== true) {
-    throw new Error(responseBody.message ?? "シート反映に失敗しました。");
+    throw new Error(responseBody.message ?? "Webhook実行に失敗しました。");
   }
+
+  return responseBody;
+};
+
+const fetchSpreadsheetSheetTabs = async (
+  sheetId: string
+): Promise<SpreadsheetSheetTab[]> => {
+  const responseBody = await postResidentSheetWebhook({
+    action: "listSheets",
+    sheetId,
+  });
+
+  if (responseBody.sheetId && responseBody.sheetId !== sheetId) {
+    throw new Error(
+      "Webhook応答の sheetId が不一致です。Apps Scriptを最新コードへ更新してください。"
+    );
+  }
+
+  const rawSheets = responseBody.sheets;
+  if (!Array.isArray(rawSheets)) {
+    throw new Error(
+      "Webhook応答に sheets がありません。Apps Scriptを最新コードへ更新してください。"
+    );
+  }
+
+  const normalizedSheets = rawSheets
+    .map((sheet) => ({
+      name: typeof sheet.name === "string" ? sheet.name.trim() : "",
+      gid:
+        typeof sheet.gid === "string"
+          ? sheet.gid.trim()
+          : String(sheet.gid ?? "").trim(),
+    }))
+    .filter((sheet) => sheet.name.length > 0 && sheet.gid.length > 0);
+
+  if (normalizedSheets.length === 0) {
+    throw new Error("シートタブ一覧が空です。共有設定とApps Scriptを確認してください。");
+  }
+
+  return normalizedSheets;
+};
+
+const postResidentSheetPayload = async (
+  payload: ResidentSheetWritePayload
+): Promise<ResidentSheetWebhookResponse> => {
+  const responseBody = await postResidentSheetWebhook(payload);
 
   if (responseBody.sheetName !== payload.sheetName) {
     throw new Error(
@@ -639,6 +721,8 @@ export function DataEntryForm() {
   const [settings, setSettings] = useState<AppSettings>({
     isOperatorFixed: false,
     fixedOperatorName: "",
+    isResidentSelfNameFixed: false,
+    fixedResidentSelfName: "",
   });
   const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
   const [formData, setFormData] = useState<FormData>({
@@ -707,23 +791,79 @@ export function DataEntryForm() {
         return "residentPrimary";
       }
     });
-  const [residentTargetSheetName, setResidentTargetSheetName] = useState(() => {
+  const [sheetTabsBySheetId, setSheetTabsBySheetId] = useState<
+    Record<string, SpreadsheetSheetTab[]>
+  >({});
+  const [sheetTabLoadingBySheetId, setSheetTabLoadingBySheetId] = useState<
+    Record<string, boolean>
+  >({});
+  const [sheetTabErrorBySheetId, setSheetTabErrorBySheetId] = useState<
+    Record<string, string>
+  >({});
+  const [selectedSheetTabBySheetId, setSelectedSheetTabBySheetId] = useState<
+    Record<string, string>
+  >(() => {
     if (typeof window === "undefined") {
-      return "";
+      return {};
     }
+
     try {
-      return (
-        window.localStorage.getItem(RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY) ?? ""
-      );
+      const saved = window.localStorage.getItem(SHEET_TAB_SELECTION_STORAGE_KEY);
+      const parsed = saved ? (JSON.parse(saved) as Record<string, unknown>) : {};
+      const normalizedSelections: Record<string, string> = {};
+
+      if (parsed && typeof parsed === "object") {
+        for (const [sheetId, sheetName] of Object.entries(parsed)) {
+          if (typeof sheetName === "string") {
+            normalizedSelections[sheetId] = sheetName;
+          }
+        }
+      }
+
+      const legacySheetName = (
+        window.localStorage.getItem(LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY) ?? ""
+      ).trim();
+      if (legacySheetName) {
+        const residentPrimaryId = extractGoogleSheetId(FIXED_SHEET_URLS.residentPrimary);
+        const residentSecondaryId = extractGoogleSheetId(
+          FIXED_SHEET_URLS.residentSecondary
+        );
+        if (residentPrimaryId && !normalizedSelections[residentPrimaryId]) {
+          normalizedSelections[residentPrimaryId] = legacySheetName;
+        }
+        if (residentSecondaryId && !normalizedSelections[residentSecondaryId]) {
+          normalizedSelections[residentSecondaryId] = legacySheetName;
+        }
+      }
+
+      return normalizedSelections;
     } catch {
-      return "";
+      return {};
     }
   });
   const activeSheetUrl =
     mode === "basic"
       ? FIXED_SHEET_URLS.basic
       : FIXED_SHEET_URLS[residentSheetSelection];
-  const sheetEmbedUrl = normalizeSheetUrl(activeSheetUrl);
+  const activeSheetId = extractGoogleSheetId(activeSheetUrl);
+  const hasLoadedActiveSheetTabs = activeSheetId
+    ? Object.prototype.hasOwnProperty.call(sheetTabsBySheetId, activeSheetId)
+    : false;
+  const activeSheetTabs = activeSheetId ? sheetTabsBySheetId[activeSheetId] ?? [] : [];
+  const activeSelectedSheetName = activeSheetId
+    ? selectedSheetTabBySheetId[activeSheetId] ?? ""
+    : "";
+  const activeSelectedSheetGid = activeSheetTabs.find(
+    (sheet) => sheet.name === activeSelectedSheetName
+  )?.gid;
+  const sheetEmbedUrl = buildSheetUrlWithGid(activeSheetUrl, activeSelectedSheetGid);
+  const isActiveSheetTabLoading = activeSheetId
+    ? Boolean(sheetTabLoadingBySheetId[activeSheetId])
+    : false;
+  const activeSheetTabError = activeSheetId
+    ? sheetTabErrorBySheetId[activeSheetId] ?? ""
+    : "";
+  const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const residentSheetSelectionMessage =
     mode === "basic"
       ? "基本モードでは固定シートを表示します。"
@@ -893,6 +1033,11 @@ export function DataEntryForm() {
           typeof parsed.fixedOperatorName === "string"
             ? parsed.fixedOperatorName
             : "",
+        isResidentSelfNameFixed: Boolean(parsed.isResidentSelfNameFixed),
+        fixedResidentSelfName:
+          typeof parsed.fixedResidentSelfName === "string"
+            ? parsed.fixedResidentSelfName
+            : "",
       });
     } catch {
       // 設定の復元に失敗した場合は既定値を使う
@@ -925,13 +1070,85 @@ export function DataEntryForm() {
 
     try {
       window.localStorage.setItem(
-        RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY,
-        residentTargetSheetName
+        SHEET_TAB_SELECTION_STORAGE_KEY,
+        JSON.stringify(selectedSheetTabBySheetId)
       );
     } catch {
       // 保存に失敗した場合はメモリ上の値を使う
     }
-  }, [residentTargetSheetName]);
+  }, [selectedSheetTabBySheetId]);
+
+  useEffect(() => {
+    if (!activeSheetId || hasLoadedActiveSheetTabs) {
+      return;
+    }
+
+    let canceled = false;
+    setSheetTabLoadingBySheetId((prev) => ({
+      ...prev,
+      [activeSheetId]: true,
+    }));
+    setSheetTabErrorBySheetId((prev) => ({
+      ...prev,
+      [activeSheetId]: "",
+    }));
+
+    void (async () => {
+      try {
+        const sheetTabs = await fetchSpreadsheetSheetTabs(activeSheetId);
+        if (canceled) {
+          return;
+        }
+
+        setSheetTabsBySheetId((prev) => ({
+          ...prev,
+          [activeSheetId]: sheetTabs,
+        }));
+        setSelectedSheetTabBySheetId((prev) => {
+          const currentSelection = prev[activeSheetId] ?? "";
+          const hasCurrentSelection = sheetTabs.some(
+            (sheet) => sheet.name === currentSelection
+          );
+          if (hasCurrentSelection) {
+            return prev;
+          }
+          const defaultSheetName = sheetTabs[0]?.name ?? "";
+          if (!defaultSheetName) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [activeSheetId]: defaultSheetName,
+          };
+        });
+      } catch (error) {
+        if (canceled) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "シートタブ一覧の取得中に不明なエラーが発生しました。";
+        setSheetTabErrorBySheetId((prev) => ({
+          ...prev,
+          [activeSheetId]: message,
+        }));
+      } finally {
+        if (canceled) {
+          return;
+        }
+        setSheetTabLoadingBySheetId((prev) => ({
+          ...prev,
+          [activeSheetId]: false,
+        }));
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [activeSheetId, hasLoadedActiveSheetTabs]);
 
   useEffect(() => {
     if (!settings.isOperatorFixed) {
@@ -943,6 +1160,17 @@ export function DataEntryForm() {
       operator: settings.fixedOperatorName,
     }));
   }, [settings.fixedOperatorName, settings.isOperatorFixed]);
+
+  useEffect(() => {
+    if (!settings.isResidentSelfNameFixed) {
+      return;
+    }
+
+    setResidentFormData((prev) => ({
+      ...prev,
+      residentSelfName: settings.fixedResidentSelfName,
+    }));
+  }, [settings.fixedResidentSelfName, settings.isResidentSelfNameFixed]);
 
   useEffect(() => {
     setFormData((prev) => ({
@@ -1488,6 +1716,17 @@ export function DataEntryForm() {
     }));
   };
 
+  const handleActiveSheetTabSelectionChange = (sheetName: string) => {
+    if (!activeSheetId) {
+      return;
+    }
+
+    setSelectedSheetTabBySheetId((prev) => ({
+      ...prev,
+      [activeSheetId]: sheetName,
+    }));
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type === "application/pdf") {
@@ -1508,6 +1747,9 @@ export function DataEntryForm() {
   const handleResidentSave = async () => {
     const newEntry: SavedResidentEntry = {
       ...residentFormData,
+      residentSelfName: settings.isResidentSelfNameFixed
+        ? settings.fixedResidentSelfName
+        : residentFormData.residentSelfName,
       id: savedResidentEntries.length + 1,
       savedAt: new Date().toISOString(),
     };
@@ -1524,9 +1766,26 @@ export function DataEntryForm() {
       return;
     }
 
-    const normalizedTargetSheetName = residentTargetSheetName.trim();
+    if (sheetTabLoadingBySheetId[targetSheetId]) {
+      setResidentSheetSyncError(
+        "シートタブ一覧を取得中です。少し待ってから保存してください。"
+      );
+      return;
+    }
+
+    const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
+    if (tabLoadError) {
+      setResidentSheetSyncError(
+        `シートタブ一覧を取得できないため保存できません。${tabLoadError}`
+      );
+      return;
+    }
+
+    const normalizedTargetSheetName = (
+      selectedSheetTabBySheetId[targetSheetId] ?? ""
+    ).trim();
     if (!normalizedTargetSheetName) {
-      setResidentSheetSyncError("書き込み先シート名を入力してください。");
+      setResidentSheetSyncError("書き込み先シートを選択してください。");
       return;
     }
 
@@ -1608,7 +1867,9 @@ export function DataEntryForm() {
       setPhoneInputMode("mobile");
     } else {
       setResidentFormData({
-        residentSelfName: "",
+        residentSelfName: settings.isResidentSelfNameFixed
+          ? settings.fixedResidentSelfName
+          : "",
         departName: "",
         departPrefecture: "",
         departCity: "",
@@ -2518,18 +2779,38 @@ export function DataEntryForm() {
               >
                 <div>
                   <label className="block text-sm text-gray-700 mb-1.5">
-                    書き込み先シート名
+                    書き込み先シート
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={residentTargetSheetName}
-                    onChange={(event) => setResidentTargetSheetName(event.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="例: 住民票入力"
-                  />
+                    onChange={(event) =>
+                      handleActiveSheetTabSelectionChange(event.target.value)
+                    }
+                    disabled={isActiveSheetTabLoading || activeSheetTabs.length === 0}
+                    className="w-full px-3 py-2 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                  >
+                    <option value="">
+                      {isActiveSheetTabLoading
+                        ? "シートタブを取得中..."
+                        : activeSheetTabs.length === 0
+                          ? "シートタブを取得できません"
+                          : "書き込み先シートを選択"}
+                    </option>
+                    {activeSheetTabs.map((sheet) => (
+                      <option
+                        key={`${sheet.gid}-${sheet.name}`}
+                        value={sheet.name}
+                      >
+                        {sheet.name}
+                      </option>
+                    ))}
+                  </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    住民票保存時は、このシートタブ名へ追記します。
+                    住民票保存時は、選択中のシートタブへ追記します。
                   </p>
+                  {activeSheetTabError && (
+                    <p className="mt-1 text-xs text-red-600">{activeSheetTabError}</p>
+                  )}
                 </div>
 
                 <div>
@@ -2539,9 +2820,18 @@ export function DataEntryForm() {
                   <input
                     type="text"
                     name="residentSelfName"
-                    value={residentFormData.residentSelfName}
+                    value={
+                      settings.isResidentSelfNameFixed
+                        ? settings.fixedResidentSelfName
+                        : residentFormData.residentSelfName
+                    }
                     onChange={handleResidentChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={settings.isResidentSelfNameFixed}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      settings.isResidentSelfNameFixed
+                        ? "bg-gray-100 text-gray-500"
+                        : ""
+                    }`}
                     placeholder="自分の名前を入力"
                   />
                 </div>
@@ -3537,20 +3827,43 @@ export function DataEntryForm() {
                   </>
                 )}
               </div>
-              {mode === "resident" && (
-                <div className="mt-2">
-                  <label className="block text-xs text-gray-600 mb-1">
-                    書き込み先シート名
-                  </label>
-                  <input
-                    type="text"
-                    value={residentTargetSheetName}
-                    onChange={(event) => setResidentTargetSheetName(event.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder="例: 住民票入力"
-                  />
-                </div>
-              )}
+              <div className="mt-2">
+                <label className="block text-xs text-gray-600 mb-1">
+                  {mode === "resident" ? "表示/書き込み先シート" : "表示シート"}
+                </label>
+                <select
+                  value={activeSelectedSheetName}
+                  onChange={(event) =>
+                    handleActiveSheetTabSelectionChange(event.target.value)
+                  }
+                  disabled={isActiveSheetTabLoading || activeSheetTabs.length === 0}
+                  className="w-full px-3 py-2 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="">
+                    {isActiveSheetTabLoading
+                      ? "シートタブを取得中..."
+                      : activeSheetTabs.length === 0
+                        ? "シートタブを取得できません"
+                        : "表示シートを選択"}
+                  </option>
+                  {activeSheetTabs.map((sheet) => (
+                    <option
+                      key={`${sheet.gid}-${sheet.name}`}
+                      value={sheet.name}
+                    >
+                      {sheet.name}
+                    </option>
+                  ))}
+                </select>
+                {mode === "resident" && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    住民票保存時は、選択中のシートタブへ追記します。
+                  </p>
+                )}
+                {activeSheetTabError && (
+                  <p className="mt-1 text-xs text-red-600">{activeSheetTabError}</p>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -3668,6 +3981,36 @@ export function DataEntryForm() {
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="例: 田中 太郎"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={settings.isResidentSelfNameFixed}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isResidentSelfNameFixed: e.target.checked,
+                  }))
+                }
+              />
+              自分の名前を固定する
+            </label>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                固定する自分の名前
+              </label>
+              <input
+                type="text"
+                value={settings.fixedResidentSelfName}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    fixedResidentSelfName: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="例: 田中 花子"
               />
             </div>
             <p className="text-xs text-gray-500">

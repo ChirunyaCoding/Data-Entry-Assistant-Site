@@ -8,44 +8,74 @@ function doPost(e) {
   try {
     var raw = e.parameter.payload || "{}";
     var payload = JSON.parse(raw);
+    var action = String(payload.action || "appendRow").trim();
 
-    var sheetId = String(payload.sheetId || "").trim();
-    var sheetName = String(payload.sheetName || "").trim();
-    var startRow = Number(payload.startRow || 6);
-    var values = payload.values || {};
-
-    if (!sheetId) {
-      return jsonResponse({ ok: false, message: "sheetId が未指定です" });
-    }
-    if (!sheetName) {
-      return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+    if (action === "listSheets") {
+      return handleListSheets(payload);
     }
 
-    var ss = SpreadsheetApp.openById(sheetId);
-    var sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      return jsonResponse({
-        ok: false,
-        message: "指定されたシート名が見つかりません: " + sheetName
-      });
-    }
-
-    var lastRow = sheet.getLastRow();
-    var nextRow = Math.max(startRow, lastRow + 1);
-
-    sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
-    sheet.getRange(nextRow, 6).setValue(values.F || "");  // F
-    sheet.getRange(nextRow, 7).setValue(values.G || "");  // G
-    sheet.getRange(nextRow, 8).setValue(values.H || "");  // H
-    sheet.getRange(nextRow, 9).setValue(values.I || "");  // I
-    sheet.getRange(nextRow, 10).setValue(values.J || ""); // J
-    sheet.getRange(nextRow, 11).setValue(values.K || ""); // K
-    sheet.getRange(nextRow, 12).setValue(values.L || ""); // L
-
-    return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
+    return handleAppendRow(payload);
   } catch (error) {
     return jsonResponse({ ok: false, message: String(error) });
   }
+}
+
+function handleListSheets(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheets = ss.getSheets().map(function (sheet) {
+    return {
+      name: sheet.getName(),
+      gid: String(sheet.getSheetId()),
+    };
+  });
+
+  return jsonResponse({
+    ok: true,
+    sheetId: sheetId,
+    sheets: sheets,
+  });
+}
+
+function handleAppendRow(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  var sheetName = String(payload.sheetName || "").trim();
+  var startRow = Number(payload.startRow || 6);
+  var values = payload.values || {};
+
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+  if (!sheetName) {
+    return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return jsonResponse({
+      ok: false,
+      message: "指定されたシート名が見つかりません: " + sheetName
+    });
+  }
+
+  var lastRow = sheet.getLastRow();
+  var nextRow = Math.max(startRow, lastRow + 1);
+
+  sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
+  sheet.getRange(nextRow, 6).setValue(values.F || "");  // F
+  sheet.getRange(nextRow, 7).setValue(values.G || "");  // G
+  sheet.getRange(nextRow, 8).setValue(values.H || "");  // H
+  sheet.getRange(nextRow, 9).setValue(values.I || "");  // I
+  sheet.getRange(nextRow, 10).setValue(values.J || ""); // J
+  sheet.getRange(nextRow, 11).setValue(values.K || ""); // K
+  sheet.getRange(nextRow, 12).setValue(values.L || ""); // L
+
+  return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
 
 function jsonResponse(body) {
@@ -63,5 +93,8 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 ```
 
 ## 3. 反映確認
-住民票モードで書き込み先シート名を入力して `保存` を押し、
+住民票モードで書き込み先シートを選択して `保存` を押し、
 `シート「xxx」のn行目へ反映しました。` が表示されることを確認します。
+
+## 4. タブ選択確認
+シート画面または住民票入力画面の選択欄で、同一スプレッドシート内のシート名が取得できることを確認します。
