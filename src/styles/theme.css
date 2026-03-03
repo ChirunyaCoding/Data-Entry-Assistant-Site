@@ -179,3 +179,12 @@
     line-height: 1.5;
   }
 }
+
+.data-entry-form input[type="text"],
+.data-entry-form input[type="tel"],
+.data-entry-form input[type="password"],
+.data-entry-form textarea,
+.data-entry-form select {
+  font-family: "Meiryo", sans-serif;
+  font-size: 10px;
+}

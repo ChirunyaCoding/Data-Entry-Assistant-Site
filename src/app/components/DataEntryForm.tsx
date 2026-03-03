@@ -5,6 +5,7 @@ import {
   FileText,
   User,
   Trash2,
+  Pencil,
   Table2,
   FileUser,
   Copy,
@@ -336,18 +337,19 @@ const toFullWidthAlphabet = (rawValue: string): string => {
 };
 
 const formatBanchiValue = (rawValue: string): string => {
-  const normalized = rawValue.normalize("NFKC").trim();
-  if (!normalized) {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
     return "";
   }
 
-  const numbers = normalized.match(/\d+/g);
-  if (!numbers) {
-    return normalized;
-  }
-
-  return numbers.map((part) => toFullWidthDigits(part)).join("ー");
+  const shiftedNormalized = trimmed.replace(/[!@#$%^&*()]/g, (char) => {
+    return SHIFTED_NUMBER_TO_DIGIT_MAP[char] ?? char;
+  });
+  const normalized = shiftedNormalized.normalize("NFKC");
+  const fullWidthAlphaNumeric = toFullWidthAlphabet(toFullWidthDigits(normalized));
+  return fullWidthAlphaNumeric.replace(/[-‐‑‒–—―ｰ]/g, "－");
 };
+
 
 const normalizeBuildingValue = (rawValue: string): string => {
   return toFullWidthAlphabet(toHalfWidthDigits(rawValue));
@@ -1736,25 +1738,54 @@ export function DataEntryForm() {
   };
 
   const handleSave = () => {
-    const newEntry: SavedEntry = {
-      ...formData,
-      id: savedEntries.length + 1,
-      savedAt: new Date().toISOString(),
-    };
-    setSavedEntries((prev) => [...prev, newEntry]);
+    const savedAt = new Date().toISOString();
+    setSavedEntries((prev) => {
+      const nextId =
+        prev.length === 0
+          ? 1
+          : Math.max(...prev.map((entry) => entry.id)) + 1;
+      const newEntry: SavedEntry = {
+        ...formData,
+        id: nextId,
+        savedAt,
+      };
+      return [...prev, newEntry];
+    });
+    handleClear();
   };
 
-  const handleResidentSave = async () => {
-    const newEntry: SavedResidentEntry = {
+  const createResidentEntryFromForm = () => {
+    return {
       ...residentFormData,
       residentSelfName: settings.isResidentSelfNameFixed
         ? settings.fixedResidentSelfName
         : residentFormData.residentSelfName,
-      id: savedResidentEntries.length + 1,
-      savedAt: new Date().toISOString(),
     };
-    setSavedResidentEntries((prev) => [...prev, newEntry]);
+  };
 
+  const handleResidentSaveToList = () => {
+    const savedAt = new Date().toISOString();
+    const residentEntry = createResidentEntryFromForm();
+    setSavedResidentEntries((prev) => {
+      const nextId =
+        prev.length === 0
+          ? 1
+          : Math.max(...prev.map((entry) => entry.id)) + 1;
+      const newEntry: SavedResidentEntry = {
+        ...residentEntry,
+        id: nextId,
+        savedAt,
+      };
+      return [...prev, newEntry];
+    });
+
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+    handleClear();
+  };
+
+  const handleResidentWriteToSheet = async () => {
+    const residentEntry = createResidentEntryFromForm();
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
 
@@ -1768,7 +1799,7 @@ export function DataEntryForm() {
 
     if (sheetTabLoadingBySheetId[targetSheetId]) {
       setResidentSheetSyncError(
-        "シートタブ一覧を取得中です。少し待ってから保存してください。"
+        "シートタブ一覧を取得中です。少し待ってから書き込みしてください。"
       );
       return;
     }
@@ -1776,7 +1807,7 @@ export function DataEntryForm() {
     const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
     if (tabLoadError) {
       setResidentSheetSyncError(
-        `シートタブ一覧を取得できないため保存できません。${tabLoadError}`
+        `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
       );
       return;
     }
@@ -1790,22 +1821,22 @@ export function DataEntryForm() {
     }
 
     const departAddress = joinResidentAddressForSheet([
-      newEntry.departPrefecture,
-      newEntry.departCity,
-      newEntry.departTown,
-      newEntry.departOoaza,
-      newEntry.departAza,
-      newEntry.departKoaza,
-      newEntry.departBanchi,
+      residentEntry.departPrefecture,
+      residentEntry.departCity,
+      residentEntry.departTown,
+      residentEntry.departOoaza,
+      residentEntry.departAza,
+      residentEntry.departKoaza,
+      residentEntry.departBanchi,
     ]);
     const registryAddress = joinResidentAddressForSheet([
-      newEntry.registryPrefecture,
-      newEntry.registryCity,
-      newEntry.registryTown,
-      newEntry.registryOoaza,
-      newEntry.registryAza,
-      newEntry.registryKoaza,
-      newEntry.registryBanchi,
+      residentEntry.registryPrefecture,
+      residentEntry.registryCity,
+      residentEntry.registryTown,
+      residentEntry.registryOoaza,
+      residentEntry.registryAza,
+      residentEntry.registryKoaza,
+      residentEntry.registryBanchi,
     ]);
 
     const payload: ResidentSheetWritePayload = {
@@ -1813,14 +1844,14 @@ export function DataEntryForm() {
       sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
       values: {
-        B: newEntry.residentSelfName,
-        F: newEntry.departName,
+        B: residentEntry.residentSelfName,
+        F: residentEntry.departName,
         G: departAddress,
-        H: newEntry.departBuilding,
-        I: newEntry.registryName,
+        H: residentEntry.departBuilding,
+        I: residentEntry.registryName,
         J: registryAddress,
-        K: newEntry.registryBuilding,
-        L: newEntry.residentAlias,
+        K: residentEntry.registryBuilding,
+        L: residentEntry.residentAlias,
       },
     };
 
@@ -1899,6 +1930,57 @@ export function DataEntryForm() {
 
   const handleDeleteResidentEntry = (id: number) => {
     setSavedResidentEntries((prev) => prev.filter((entry) => entry.id !== id));
+  };
+
+  const handleEditEntry = (entry: SavedEntry) => {
+    setFormData({
+      operator: settings.isOperatorFixed ? settings.fixedOperatorName : entry.operator,
+      filename: entry.filename,
+      postalCode: entry.postalCode,
+      prefecture: entry.prefecture,
+      city: entry.city,
+      town: entry.town,
+      ooaza: entry.ooaza,
+      aza: entry.aza,
+      koaza: entry.koaza,
+      banchi: entry.banchi,
+      building: entry.building,
+      company: entry.company,
+      position: entry.position,
+      name: entry.name,
+      phone: entry.phone,
+      notes: entry.notes,
+    });
+    setShowNotes(Boolean(entry.notes));
+  };
+
+  const handleEditResidentEntry = (entry: SavedResidentEntry) => {
+    setResidentFormData({
+      residentSelfName: settings.isResidentSelfNameFixed
+        ? settings.fixedResidentSelfName
+        : entry.residentSelfName,
+      departName: entry.departName,
+      departPrefecture: entry.departPrefecture,
+      departCity: entry.departCity,
+      departTown: entry.departTown,
+      departOoaza: entry.departOoaza,
+      departAza: entry.departAza,
+      departKoaza: entry.departKoaza,
+      departBanchi: entry.departBanchi,
+      departBuilding: entry.departBuilding,
+      registryName: entry.registryName,
+      registryPrefecture: entry.registryPrefecture,
+      registryCity: entry.registryCity,
+      registryTown: entry.registryTown,
+      registryOoaza: entry.registryOoaza,
+      registryAza: entry.registryAza,
+      registryKoaza: entry.registryKoaza,
+      registryBanchi: entry.registryBanchi,
+      registryBuilding: entry.registryBuilding,
+      residentAlias: entry.residentAlias,
+    });
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
   };
 
   const handleCopyBasicEntries = async () => {
@@ -2024,7 +2106,7 @@ export function DataEntryForm() {
 
   if (!isSimpleLoginPassed) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="data-entry-form min-h-screen flex items-center justify-center bg-gray-50 px-4">
         <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h1 className="text-xl text-gray-900">データ入力補助ツール</h1>
           <p className="mt-2 text-sm text-gray-600">
@@ -2083,7 +2165,7 @@ export function DataEntryForm() {
   }
 
   return (
-    <div className="h-screen flex bg-gray-50">
+    <div className="data-entry-form h-screen flex bg-gray-50">
       {/* 左側：入力フォーム */}
       <div className="w-1/2 bg-white border-r border-gray-200 overflow-y-auto">
         <div className="p-8">
@@ -2755,13 +2837,22 @@ export function DataEntryForm() {
                               </div>
                             )}
                           </div>
-                          <button
-                            onClick={() => handleDeleteEntry(entry.id)}
-                            className="ml-3 p-2 text-gray-400 hover:text-red-600 transition-colors"
-                            title="削除"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="ml-3 flex items-center gap-1">
+                            <button
+                              onClick={() => handleDeleteEntry(entry.id)}
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                              title="削除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleEditEntry(entry)}
+                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                              title="編集"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))
@@ -2806,7 +2897,7 @@ export function DataEntryForm() {
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    住民票保存時は、選択中のシートタブへ追記します。
+                    住民票書き込み時は、選択中のシートタブへ追記します。
                   </p>
                   {activeSheetTabError && (
                     <p className="mt-1 text-xs text-red-600">{activeSheetTabError}</p>
@@ -3625,12 +3716,19 @@ export function DataEntryForm() {
               {/* ボタン */}
               <div className="mt-6 flex gap-3">
                 <button
-                  onClick={handleResidentSave}
-                  disabled={isResidentSheetSaving}
+                  onClick={handleResidentSaveToList}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  {isResidentSheetSaving ? "保存中..." : "保存"}
+                  リストへ保存
+                </button>
+                <button
+                  onClick={handleResidentWriteToSheet}
+                  disabled={isResidentSheetSaving}
+                  className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Table2 className="w-4 h-4" />
+                  {isResidentSheetSaving ? "書き込み中..." : "書き込み"}
                 </button>
                 <button
                   onClick={handleClear}
@@ -3720,13 +3818,22 @@ export function DataEntryForm() {
                               </div>
                             </div>
                           </div>
-                          <button
-                            onClick={() => handleDeleteResidentEntry(entry.id)}
-                            className="ml-3 p-2 text-gray-400 hover:text-red-600 transition-colors"
-                            title="削除"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="ml-3 flex items-center gap-1">
+                            <button
+                              onClick={() => handleDeleteResidentEntry(entry.id)}
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                              title="削除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleEditResidentEntry(entry)}
+                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                              title="編集"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))
@@ -3857,7 +3964,7 @@ export function DataEntryForm() {
                 </select>
                 {mode === "resident" && (
                   <p className="mt-1 text-xs text-gray-500">
-                    住民票保存時は、選択中のシートタブへ追記します。
+                    住民票書き込み時は、選択中のシートタブへ追記します。
                   </p>
                 )}
                 {activeSheetTabError && (
