@@ -539,6 +539,12 @@ interface ResidentSheetWritePayload {
   };
 }
 
+interface ResidentSheetWebhookResponse {
+  ok: boolean;
+  row?: number;
+  message?: string;
+}
+
 const extractGoogleSheetId = (sheetUrl: string): string => {
   const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return match?.[1] ?? "";
@@ -550,7 +556,7 @@ const joinResidentAddressForSheet = (parts: string[]): string => {
 
 const postResidentSheetPayload = async (
   payload: ResidentSheetWritePayload
-): Promise<void> => {
+): Promise<ResidentSheetWebhookResponse> => {
   if (!RESIDENT_SHEET_WEBHOOK_URL) {
     throw new Error(
       "VITE_RESIDENT_SHEET_WEBHOOK_URL が未設定のため、シート反映を実行できません。"
@@ -570,12 +576,15 @@ const postResidentSheetPayload = async (
   });
 
   const responseText = await response.text();
-  let responseBody: { ok?: boolean; message?: string } | null = null;
+  let responseBody: ResidentSheetWebhookResponse | null = null;
   if (responseText) {
     try {
-      responseBody = JSON.parse(responseText) as { ok?: boolean; message?: string };
+      responseBody = JSON.parse(responseText) as ResidentSheetWebhookResponse;
     } catch {
-      responseBody = { message: responseText };
+      const snippet = responseText.slice(0, 120).replace(/\s+/g, " ").trim();
+      throw new Error(
+        `Webhookの応答がJSONではありません。Apps Scriptの公開設定を確認してください。応答先頭: ${snippet}`
+      );
     }
   }
 
@@ -586,9 +595,17 @@ const postResidentSheetPayload = async (
     );
   }
 
-  if (responseBody && responseBody.ok === false) {
+  if (!responseBody) {
+    throw new Error(
+      "Webhook応答が空です。Apps Scriptの返却値（JSON）を確認してください。"
+    );
+  }
+
+  if (responseBody.ok !== true) {
     throw new Error(responseBody.message ?? "シート反映に失敗しました。");
   }
+
+  return responseBody;
 };
 
 export function DataEntryForm() {
@@ -1506,8 +1523,12 @@ export function DataEntryForm() {
 
     setIsResidentSheetSaving(true);
     try {
-      await postResidentSheetPayload(payload);
-      setResidentSheetSyncSuccess("シートへ反映しました。");
+      const result = await postResidentSheetPayload(payload);
+      const successMessage =
+        typeof result.row === "number"
+          ? `シートへ反映しました（${result.row}行目）。`
+          : "シートへ反映しました。";
+      setResidentSheetSyncSuccess(successMessage);
     } catch (error) {
       const message =
         error instanceof Error
