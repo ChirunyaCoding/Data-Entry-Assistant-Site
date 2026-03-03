@@ -22,6 +22,9 @@ function doPost(e) {
     if (action === "appendBasicFileNameRows") {
       return handleAppendBasicFileNameRows(payload);
     }
+    if (action === "appendResidentSecondaryRows") {
+      return handleAppendResidentSecondaryRows(payload);
+    }
     if (action === "appendResidentFolderRows") {
       return handleAppendResidentFolderRows(payload);
     }
@@ -283,6 +286,49 @@ function handleAppendResidentFolderRows(payload) {
   });
 }
 
+function handleAppendResidentSecondaryRows(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  var sheetName = String(payload.sheetName || "").trim();
+  var startRow = Number(payload.startRow || 3);
+  var rows = Array.isArray(payload.rows) ? payload.rows : [];
+
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+  if (!sheetName) {
+    return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+  }
+  if (rows.length === 0) {
+    return jsonResponse({ ok: false, message: "rows が空です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return jsonResponse({
+      ok: false,
+      message: "指定されたシート名が見つかりません: " + sheetName
+    });
+  }
+
+  var values = rows.map(function (row) {
+    return [String(row.B || ""), String(row.C || "")];
+  });
+
+  var lastRow = sheet.getLastRow();
+  var nextRow = Math.max(startRow, lastRow + 1);
+  sheet.getRange(nextRow, 2, values.length, 2).setValues(values); // B:C
+  sheet.getRange(nextRow, 2, values.length, 2).setFontFamily("Meiryo").setFontSize(10);
+
+  return jsonResponse({
+    ok: true,
+    sheetName: sheetName,
+    rowsWritten: values.length,
+    startRow: nextRow,
+    endRow: nextRow + values.length - 1,
+  });
+}
+
 function columnToLetter(column) {
   var letter = "";
   var temp = column;
@@ -317,6 +363,7 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 - 基本モード: 表示シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。
 - 基本モード: `フォルダを読み込み` でフォルダを選択し、`B5` 以降へ `tif/tiff` ファイル名が追記されること。
 - 住民票モード（住民票シート1）: `フォルダを読み込み` でフォルダを選択し、`C/D/E` 列へ `6` 行目以降に追記されること。
+- 住民票モード（住民票シート2）: `フォルダを読み込み` 後に氏名を入力し、`書き込み` で `B3:C` へ件数分追記されること。
 
 ## 4. 初期化確認
 - シート選択UIの `初期化` を押し、対象レンジがクリアされること。

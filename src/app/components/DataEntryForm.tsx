@@ -70,6 +70,12 @@ interface SavedResidentEntry extends ResidentFormData {
   savedAt: string;
 }
 
+interface ResidentSecondaryEntry {
+  id: number;
+  fileName: string;
+  name: string;
+}
+
 const FULL_WIDTH_SPACE = "　";
 const SUGGESTION_ITEM_HEIGHT = 36;
 const SUGGESTION_PANEL_MAX_HEIGHT = 288;
@@ -137,6 +143,7 @@ const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
 const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1";
 const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
+const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
   basic:
@@ -603,6 +610,19 @@ interface ResidentFolderSheetWritePayload {
   rows: ResidentFolderSheetWriteRow[];
 }
 
+interface ResidentSecondarySheetWriteRow {
+  B: string;
+  C: string;
+}
+
+interface ResidentSecondarySheetWritePayload {
+  action: "appendResidentSecondaryRows";
+  sheetId: string;
+  sheetName: string;
+  startRow: number;
+  rows: ResidentSecondarySheetWriteRow[];
+}
+
 interface BasicSheetWritePayload {
   action: "appendBasicRow";
   sheetId: string;
@@ -756,9 +776,36 @@ const buildBasicFileNamesFromFolder = (files: File[]): string[] => {
     .filter((fileName) => fileName.length > 0);
 };
 
+const forceFullWidthText = (rawValue: string): string => {
+  const normalized = rawValue.normalize("NFKC");
+  const withFullWidthSpace = normalized.replace(/ /g, FULL_WIDTH_SPACE);
+  return withFullWidthSpace.replace(/[!-~]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) + 0xfee0)
+  );
+};
+
+const buildResidentSecondaryEntriesFromFiles = (
+  files: File[]
+): ResidentSecondaryEntry[] => {
+  return files
+    .filter((file) => TIFF_EXTENSION_PATTERN.test(file.name))
+    .sort((a, b) => {
+      const aPath = (a.webkitRelativePath || a.name).trim();
+      const bPath = (b.webkitRelativePath || b.name).trim();
+      return aPath.localeCompare(bPath, "ja");
+    })
+    .map((file, index) => ({
+      id: index + 1,
+      fileName: forceFullWidthText(file.name.trim()),
+      name: "",
+    }))
+    .filter((entry) => entry.fileName.length > 0);
+};
+
 type ResidentSheetWebhookPayload =
   | ResidentSheetWritePayload
   | ResidentFolderSheetWritePayload
+  | ResidentSecondarySheetWritePayload
   | ResidentSheetListPayload
   | BasicSheetWritePayload
   | BasicFileNameSheetWritePayload
@@ -976,6 +1023,9 @@ export function DataEntryForm() {
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
+  const [residentSecondaryEntries, setResidentSecondaryEntries] = useState<
+    ResidentSecondaryEntry[]
+  >([]);
   const [isBasicSheetSaving, setIsBasicSheetSaving] = useState(false);
   const [isBasicFolderImporting, setIsBasicFolderImporting] = useState(false);
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
@@ -2000,6 +2050,12 @@ export function DataEntryForm() {
     }));
   };
 
+  const handleResidentSecondaryNameChange = (id: number, name: string) => {
+    setResidentSecondaryEntries((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, name } : entry))
+    );
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type === "application/pdf") {
@@ -2245,6 +2301,14 @@ export function DataEntryForm() {
   };
 
   const handleResidentSaveToList = () => {
+    if (residentSheetSelection === "residentSecondary") {
+      setResidentSheetSyncError(
+        "住民票シート2ではリスト保存は使用しません。書き込みを実行してください。"
+      );
+      setResidentSheetSyncSuccess("");
+      return;
+    }
+
     const savedAt = new Date().toISOString();
     const residentEntry = createResidentEntryFromForm();
     setSavedResidentEntries((prev) => {
@@ -2266,7 +2330,6 @@ export function DataEntryForm() {
   };
 
   const handleResidentWriteToSheet = async () => {
-    const residentEntry = createResidentEntryFromForm();
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
 
@@ -2301,6 +2364,65 @@ export function DataEntryForm() {
       return;
     }
 
+    if (residentSheetSelection === "residentSecondary") {
+      if (residentSecondaryEntries.length === 0) {
+        setResidentSheetSyncError(
+          "先にフォルダを読み込み、氏名入力欄を生成してください。"
+        );
+        return;
+      }
+
+      const rows: ResidentSecondarySheetWriteRow[] = residentSecondaryEntries.map(
+        (entry) => ({
+          B: forceFullWidthText(entry.fileName),
+          C: entry.name.trim(),
+        })
+      );
+
+      const payload: ResidentSecondarySheetWritePayload = {
+        action: "appendResidentSecondaryRows",
+        sheetId: targetSheetId,
+        sheetName: normalizedTargetSheetName,
+        startRow: RESIDENT_SECONDARY_SHEET_START_ROW,
+        rows,
+      };
+
+      setIsResidentSheetSaving(true);
+      try {
+        const result = await postSheetWebhook(
+          payload,
+          residentSheetWebhookConfig,
+          "住民票シート2書き込み"
+        );
+
+        if (result.sheetName && result.sheetName !== normalizedTargetSheetName) {
+          throw new Error(
+            "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+          );
+        }
+
+        const writtenCount =
+          typeof result.rowsWritten === "number" ? result.rowsWritten : rows.length;
+        const writtenRange =
+          typeof result.startRow === "number" && typeof result.endRow === "number"
+            ? `${result.startRow}行目〜${result.endRow}行目`
+            : `${writtenCount}行`;
+        setResidentSheetSyncSuccess(
+          `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で反映しました。`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "シート反映中に不明なエラーが発生しました。";
+        setResidentSheetSyncError(message);
+      } finally {
+        setIsResidentSheetSaving(false);
+      }
+      return;
+    }
+
+    const residentEntry = createResidentEntryFromForm();
     const departAddress = joinResidentAddressForSheet([
       residentEntry.departPrefecture,
       residentEntry.departCity,
@@ -2362,13 +2484,6 @@ export function DataEntryForm() {
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
 
-    if (residentSheetSelection !== "residentPrimary") {
-      setResidentSheetSyncError(
-        "フォルダ読み込みは住民票シート1選択時のみ実行できます。"
-      );
-      return;
-    }
-
     const input = residentFolderInputRef.current;
     if (!input) {
       setResidentSheetSyncError(
@@ -2394,9 +2509,18 @@ export function DataEntryForm() {
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
 
-    if (residentSheetSelection !== "residentPrimary") {
-      setResidentSheetSyncError(
-        "フォルダ読み込みは住民票シート1選択時のみ実行できます。"
+    if (residentSheetSelection === "residentSecondary") {
+      const entries = buildResidentSecondaryEntriesFromFiles(files);
+      if (entries.length === 0) {
+        setResidentSheetSyncError(
+          "読み込んだフォルダ内に .tif または .tiff ファイルが見つかりません。"
+        );
+        return;
+      }
+
+      setResidentSecondaryEntries(entries);
+      setResidentSheetSyncSuccess(
+        `${entries.length}件のファイルを読み込みました。氏名を入力して書き込みしてください。`
       );
       return;
     }
@@ -2637,6 +2761,9 @@ export function DataEntryForm() {
         registryBuilding: "",
         residentAlias: "",
       });
+      setResidentSecondaryEntries([]);
+      setResidentSheetSyncError("");
+      setResidentSheetSyncSuccess("");
     }
   };
 
@@ -3612,7 +3739,11 @@ export function DataEntryForm() {
               <div
                 ref={residentFormRef}
                 className="space-y-4"
-                onKeyDown={handleResidentFormNavigation}
+                onKeyDown={
+                  residentSheetSelection === "residentPrimary"
+                    ? handleResidentFormNavigation
+                    : undefined
+                }
               >
                 <div>
                   <label className="block text-sm text-gray-700 mb-1.5">
@@ -3650,28 +3781,70 @@ export function DataEntryForm() {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1.5">
-                    自分の名前（B列）
-                  </label>
-                  <input
-                    type="text"
-                    name="residentSelfName"
-                    value={
-                      settings.isResidentSelfNameFixed
-                        ? settings.fixedResidentSelfName
-                        : residentFormData.residentSelfName
-                    }
-                    onChange={handleResidentChange}
-                    disabled={settings.isResidentSelfNameFixed}
-                    className={`w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                      settings.isResidentSelfNameFixed
-                        ? "bg-gray-100 text-gray-500"
-                        : ""
-                    }`}
-                    placeholder="自分の名前を入力"
-                  />
-                </div>
+                {residentSheetSelection === "residentSecondary" ? (
+                  <div className="space-y-4">
+                    <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                      住民票シート2モード: フォルダ読込後、件数分の氏名入力欄が生成されます。書き込み時は
+                      B3からファイル名、C3から氏名を順に反映します。
+                    </div>
+                    {residentSecondaryEntries.length === 0 ? (
+                      <div className="rounded border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                        フォルダを読み込むと、ファイル数分の氏名入力欄を表示します。
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
+                        {residentSecondaryEntries.map((entry, index) => (
+                          <div
+                            key={entry.id}
+                            className="rounded border border-gray-200 bg-gray-50 p-3"
+                          >
+                            <div className="text-xs text-gray-600">
+                              ファイル名（B列）: {entry.fileName}
+                            </div>
+                            <label className="mt-2 block text-sm text-gray-700 mb-1">
+                              氏名（C列） {index + 1}
+                            </label>
+                            <input
+                              type="text"
+                              value={entry.name}
+                              onChange={(event) =>
+                                handleResidentSecondaryNameChange(
+                                  entry.id,
+                                  event.target.value
+                                )
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="氏名を入力"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        自分の名前（B列）
+                      </label>
+                      <input
+                        type="text"
+                        name="residentSelfName"
+                        value={
+                          settings.isResidentSelfNameFixed
+                            ? settings.fixedResidentSelfName
+                            : residentFormData.residentSelfName
+                        }
+                        onChange={handleResidentChange}
+                        disabled={settings.isResidentSelfNameFixed}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                          settings.isResidentSelfNameFixed
+                            ? "bg-gray-100 text-gray-500"
+                            : ""
+                        }`}
+                        placeholder="自分の名前を入力"
+                      />
+                    </div>
 
                 {/* 2列レイアウト - 転出と本籍を並列表示 */}
                 <div className="grid grid-cols-2 gap-6">
@@ -4457,7 +4630,8 @@ export function DataEntryForm() {
                     </div>
                   </div>
                 </div>
-              </div>
+                  </div>
+                )}
 
               <input
                 ref={residentFolderInputRef}
@@ -4468,48 +4642,79 @@ export function DataEntryForm() {
               />
 
               {/* ボタン */}
-              <div className="mt-6 flex flex-wrap gap-3">
-                <button
-                  onClick={handleResidentSaveToList}
-                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Save className="w-4 h-4" />
-                  リストへ保存
-                </button>
-                <button
-                  onClick={handleResidentWriteToSheet}
-                  disabled={isResidentSheetSaving || isResidentFolderImporting}
-                  className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Table2 className="w-4 h-4" />
-                  {isResidentSheetSaving ? "書き込み中..." : "書き込み"}
-                </button>
-                <button
-                  onClick={handleResidentFolderImportClick}
-                  disabled={
-                    residentSheetSelection !== "residentPrimary" ||
-                    isResidentSheetSaving ||
-                    isResidentFolderImporting
-                  }
-                  className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Upload className="w-4 h-4" />
-                  {isResidentFolderImporting ? "読込中..." : "フォルダを読み込み"}
-                </button>
-                <button
-                  onClick={handleClear}
-                  className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                >
-                  クリア
-                </button>
-                <button
-                  onClick={handleCopyResidentEntries}
-                  className="px-6 py-2.5 bg-green-600 text-white rounded hover:bg-green-700 flex items-center justify-center gap-2"
-                >
-                  <Copy className="w-4 h-4" />
-                  コピー
-                </button>
-              </div>
+              {residentSheetSelection === "residentSecondary" ? (
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    onClick={handleResidentFolderImportClick}
+                    disabled={isResidentSheetSaving || isResidentFolderImporting}
+                    className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {isResidentFolderImporting ? "読込中..." : "フォルダを読み込み"}
+                  </button>
+                  <button
+                    onClick={handleResidentWriteToSheet}
+                    disabled={
+                      isResidentSheetSaving ||
+                      isResidentFolderImporting ||
+                      residentSecondaryEntries.length === 0
+                    }
+                    className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Table2 className="w-4 h-4" />
+                    {isResidentSheetSaving ? "書き込み中..." : "書き込み"}
+                  </button>
+                  <button
+                    onClick={handleClear}
+                    className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                  >
+                    クリア
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    onClick={handleResidentSaveToList}
+                    className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    リストへ保存
+                  </button>
+                  <button
+                    onClick={handleResidentWriteToSheet}
+                    disabled={isResidentSheetSaving || isResidentFolderImporting}
+                    className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Table2 className="w-4 h-4" />
+                    {isResidentSheetSaving ? "書き込み中..." : "書き込み"}
+                  </button>
+                  <button
+                    onClick={handleResidentFolderImportClick}
+                    disabled={
+                      residentSheetSelection !== "residentPrimary" ||
+                      isResidentSheetSaving ||
+                      isResidentFolderImporting
+                    }
+                    className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {isResidentFolderImporting ? "読込中..." : "フォルダを読み込み"}
+                  </button>
+                  <button
+                    onClick={handleClear}
+                    className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                  >
+                    クリア
+                  </button>
+                  <button
+                    onClick={handleCopyResidentEntries}
+                    className="px-6 py-2.5 bg-green-600 text-white rounded hover:bg-green-700 flex items-center justify-center gap-2"
+                  >
+                    <Copy className="w-4 h-4" />
+                    コピー
+                  </button>
+                </div>
+              )}
               {residentSheetSyncSuccess && (
                 <p className="mt-2 text-sm text-green-700">{residentSheetSyncSuccess}</p>
               )}
@@ -4517,94 +4722,100 @@ export function DataEntryForm() {
                 <p className="mt-2 text-sm text-red-600">{residentSheetSyncError}</p>
               )}
 
-              {/* 保存済みリスト */}
-              <div className="mt-8">
-                <h2 className="text-lg text-gray-900 mb-4">保存済みリスト ({savedResidentEntries.length}件)</h2>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {savedResidentEntries.length === 0 ? (
-                    <div className="text-center py-8 text-gray-400">
-                      保存されたデータはありません
-                    </div>
-                  ) : (
-                    savedResidentEntries.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="p-4 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="mb-3 text-xs text-gray-600">
-                              自分の名前: {entry.residentSelfName || "—"}
-                            </div>
-                            {/* 転出情報 */}
-                            <div className="mb-3 pb-3 border-b border-gray-200">
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">転出</span>
-                                <span className="text-sm font-medium text-gray-900">
-                                  {entry.departName || "（氏名なし）"}
-                                </span>
+              {residentSheetSelection !== "residentSecondary" && (
+                <div className="mt-8">
+                  <h2 className="text-lg text-gray-900 mb-4">
+                    保存済みリスト ({savedResidentEntries.length}件)
+                  </h2>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {savedResidentEntries.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400">
+                        保存されたデータはありません
+                      </div>
+                    ) : (
+                      savedResidentEntries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="p-4 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="mb-3 text-xs text-gray-600">
+                                自分の名前: {entry.residentSelfName || "—"}
                               </div>
-                              <div className="text-xs text-gray-600 space-y-1">
-                                <div>
-                                  {[
-                                    entry.departPrefecture,
-                                    entry.departCity,
-                                    entry.departTown,
-                                    entry.departOoaza,
-                                    entry.departAza,
-                                    entry.departKoaza,
-                                    entry.departBanchi,
-                                    entry.departBuilding
-                                  ].filter(Boolean).join(" ") || "—"}
+                              <div className="mb-3 pb-3 border-b border-gray-200">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                    転出
+                                  </span>
+                                  <span className="text-sm font-medium text-gray-900">
+                                    {entry.departName || "（氏名なし）"}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-600 space-y-1">
+                                  <div>
+                                    {[
+                                      entry.departPrefecture,
+                                      entry.departCity,
+                                      entry.departTown,
+                                      entry.departOoaza,
+                                      entry.departAza,
+                                      entry.departKoaza,
+                                      entry.departBanchi,
+                                      entry.departBuilding,
+                                    ].filter(Boolean).join(" ") || "—"}
+                                  </div>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-1 rounded">
+                                    本籍
+                                  </span>
+                                  <span className="text-sm font-medium text-gray-900">
+                                    {entry.registryName || "（氏名なし）"}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-600 space-y-1">
+                                  <div>
+                                    {[
+                                      entry.registryPrefecture,
+                                      entry.registryCity,
+                                      entry.registryTown,
+                                      entry.registryOoaza,
+                                      entry.registryAza,
+                                      entry.registryKoaza,
+                                      entry.registryBanchi,
+                                      entry.registryBuilding,
+                                    ].filter(Boolean).join(" ") || "—"}
+                                  </div>
+                                  <div>通称・別名: {entry.residentAlias || "—"}</div>
                                 </div>
                               </div>
                             </div>
-                            {/* 本籍情報 */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-1 rounded">本籍</span>
-                                <span className="text-sm font-medium text-gray-900">
-                                  {entry.registryName || "（氏名なし）"}
-                                </span>
-                              </div>
-                              <div className="text-xs text-gray-600 space-y-1">
-                                <div>
-                                  {[
-                                    entry.registryPrefecture,
-                                    entry.registryCity,
-                                    entry.registryTown,
-                                    entry.registryOoaza,
-                                    entry.registryAza,
-                                    entry.registryKoaza,
-                                    entry.registryBanchi,
-                                    entry.registryBuilding
-                                  ].filter(Boolean).join(" ") || "—"}
-                                </div>
-                                <div>通称・別名: {entry.residentAlias || "—"}</div>
-                              </div>
+                            <div className="ml-3 flex items-center gap-1">
+                              <button
+                                onClick={() => handleDeleteResidentEntry(entry.id)}
+                                className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                                title="削除"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleEditResidentEntry(entry)}
+                                className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="編集"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
                             </div>
-                          </div>
-                          <div className="ml-3 flex items-center gap-1">
-                            <button
-                              onClick={() => handleDeleteResidentEntry(entry.id)}
-                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-                              title="削除"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleEditResidentEntry(entry)}
-                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
-                              title="編集"
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </button>
                           </div>
                         </div>
-                      </div>
-                    ))
-                  )}
+                      ))
+                    )}
+                  </div>
                 </div>
+              )}
               </div>
             </>
           )}
