@@ -210,8 +210,12 @@ function jsonResponse(body) {
 プロジェクトルートに `.env` を作成し、次を設定してください。
 
 ```env
+VITE_BASIC_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxxxxx/exec
 VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxxxxx/exec
 ```
+
+- 基本モードのシート操作は `VITE_BASIC_SHEET_WEBHOOK_URL` を使用します。
+- 住民票モードのシート操作は `VITE_RESIDENT_SHEET_WEBHOOK_URL` を使用します。
 
 ## 3. 反映確認
 - 住民票モード: 書き込み先シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。

@@ -124,6 +124,9 @@ const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
 const SIMPLE_LOGIN_PASSED_STORAGE_KEY = "data-entry-tool.simple-login-passed.v1";
 const SIMPLE_LOGIN_NAME = "admin";
 const SIMPLE_LOGIN_PASS = "chihiro";
+const BASIC_SHEET_WEBHOOK_URL = (
+  import.meta.env.VITE_BASIC_SHEET_WEBHOOK_URL ?? ""
+).trim();
 const RESIDENT_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
 ).trim();
@@ -672,12 +675,19 @@ type ResidentSheetWebhookPayload =
   | BasicSheetWritePayload
   | SheetClearPayload;
 
-const postResidentSheetWebhook = async (
-  payload: ResidentSheetWebhookPayload
+interface SheetWebhookConfig {
+  envName: "VITE_BASIC_SHEET_WEBHOOK_URL" | "VITE_RESIDENT_SHEET_WEBHOOK_URL";
+  url: string;
+}
+
+const postSheetWebhook = async (
+  payload: ResidentSheetWebhookPayload,
+  webhookConfig: SheetWebhookConfig,
+  actionLabel: string
 ): Promise<ResidentSheetWebhookResponse> => {
-  if (!RESIDENT_SHEET_WEBHOOK_URL) {
+  if (!webhookConfig.url) {
     throw new Error(
-      "VITE_RESIDENT_SHEET_WEBHOOK_URL が未設定のため、シート反映を実行できません。"
+      `${webhookConfig.envName} が未設定のため、${actionLabel}を実行できません。`
     );
   }
 
@@ -685,7 +695,7 @@ const postResidentSheetWebhook = async (
     payload: JSON.stringify(payload),
   }).toString();
 
-  const response = await fetch(RESIDENT_SHEET_WEBHOOK_URL, {
+  const response = await fetch(webhookConfig.url, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -709,7 +719,7 @@ const postResidentSheetWebhook = async (
   if (!response.ok) {
     throw new Error(
       responseBody?.message ??
-        `シート反映リクエストに失敗しました（HTTP ${response.status}）`
+        `Webhookリクエストに失敗しました（HTTP ${response.status}）`
     );
   }
 
@@ -727,12 +737,17 @@ const postResidentSheetWebhook = async (
 };
 
 const fetchSpreadsheetSheetTabs = async (
-  sheetId: string
+  sheetId: string,
+  webhookConfig: SheetWebhookConfig
 ): Promise<SpreadsheetSheetTab[]> => {
-  const responseBody = await postResidentSheetWebhook({
-    action: "listSheets",
-    sheetId,
-  });
+  const responseBody = await postSheetWebhook(
+    {
+      action: "listSheets",
+      sheetId,
+    },
+    webhookConfig,
+    "シートタブ取得"
+  );
 
   if (responseBody.sheetId && responseBody.sheetId !== sheetId) {
     throw new Error(
@@ -765,9 +780,14 @@ const fetchSpreadsheetSheetTabs = async (
 };
 
 const postResidentSheetPayload = async (
-  payload: ResidentSheetWritePayload
+  payload: ResidentSheetWritePayload,
+  webhookConfig: SheetWebhookConfig
 ): Promise<ResidentSheetWebhookResponse> => {
-  const responseBody = await postResidentSheetWebhook(payload);
+  const responseBody = await postSheetWebhook(
+    payload,
+    webhookConfig,
+    "住民票シート書き込み"
+  );
 
   if (responseBody.sheetName !== payload.sheetName) {
     throw new Error(
@@ -779,9 +799,14 @@ const postResidentSheetPayload = async (
 };
 
 const postBasicSheetPayload = async (
-  payload: BasicSheetWritePayload
+  payload: BasicSheetWritePayload,
+  webhookConfig: SheetWebhookConfig
 ): Promise<ResidentSheetWebhookResponse> => {
-  const responseBody = await postResidentSheetWebhook(payload);
+  const responseBody = await postSheetWebhook(
+    payload,
+    webhookConfig,
+    "基本シート書き込み"
+  );
 
   if (responseBody.sheetName !== payload.sheetName) {
     throw new Error(
@@ -939,6 +964,16 @@ export function DataEntryForm() {
       return {};
     }
   });
+  const basicSheetWebhookConfig: SheetWebhookConfig = {
+    envName: "VITE_BASIC_SHEET_WEBHOOK_URL",
+    url: BASIC_SHEET_WEBHOOK_URL,
+  };
+  const residentSheetWebhookConfig: SheetWebhookConfig = {
+    envName: "VITE_RESIDENT_SHEET_WEBHOOK_URL",
+    url: RESIDENT_SHEET_WEBHOOK_URL,
+  };
+  const activeSheetWebhookConfig =
+    mode === "basic" ? basicSheetWebhookConfig : residentSheetWebhookConfig;
   const activeSheetUrl =
     mode === "basic"
       ? FIXED_SHEET_URLS.basic
@@ -1198,7 +1233,10 @@ export function DataEntryForm() {
 
     void (async () => {
       try {
-        const sheetTabs = await fetchSpreadsheetSheetTabs(activeSheetId);
+        const sheetTabs = await fetchSpreadsheetSheetTabs(
+          activeSheetId,
+          activeSheetWebhookConfig
+        );
         if (canceled) {
           return;
         }
@@ -1251,7 +1289,12 @@ export function DataEntryForm() {
     return () => {
       canceled = true;
     };
-  }, [activeSheetId, hasLoadedActiveSheetTabs]);
+  }, [
+    activeSheetId,
+    hasLoadedActiveSheetTabs,
+    activeSheetWebhookConfig.envName,
+    activeSheetWebhookConfig.url,
+  ]);
 
   useEffect(() => {
     if (!settings.isOperatorFixed) {
@@ -1958,7 +2001,7 @@ export function DataEntryForm() {
 
     setIsBasicSheetSaving(true);
     try {
-      const result = await postBasicSheetPayload(payload);
+      const result = await postBasicSheetPayload(payload, basicSheetWebhookConfig);
       const successMessage =
         typeof result.row === "number"
           ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
@@ -2078,7 +2121,10 @@ export function DataEntryForm() {
 
     setIsResidentSheetSaving(true);
     try {
-      const result = await postResidentSheetPayload(payload);
+      const result = await postResidentSheetPayload(
+        payload,
+        residentSheetWebhookConfig
+      );
       const successMessage =
         typeof result.row === "number"
           ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
@@ -2178,7 +2224,11 @@ export function DataEntryForm() {
 
     setIsSheetInitializing(true);
     try {
-      const result = await postResidentSheetWebhook(payload);
+      const result = await postSheetWebhook(
+        payload,
+        activeSheetWebhookConfig,
+        "シート初期化"
+      );
       if (result.sheetName && result.sheetName !== targetSheetName) {
         throw new Error(
           "Webhook応答の sheetName が不一致です。Apps Scriptを最新コードへ更新してください。"
