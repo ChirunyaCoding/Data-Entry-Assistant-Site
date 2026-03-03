@@ -19,6 +19,9 @@ function doPost(e) {
     if (action === "appendBasicRow") {
       return handleAppendBasicRow(payload);
     }
+    if (action === "appendResidentFolderRows") {
+      return handleAppendResidentFolderRows(payload);
+    }
     if (action === "appendResidentRow" || action === "appendRow") {
       return handleAppendResidentRow(payload);
     }
@@ -188,6 +191,52 @@ function handleAppendResidentRow(payload) {
   return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
 
+function handleAppendResidentFolderRows(payload) {
+  var sheetId = String(payload.sheetId || "").trim();
+  var sheetName = String(payload.sheetName || "").trim();
+  var startRow = Number(payload.startRow || 6);
+  var rows = Array.isArray(payload.rows) ? payload.rows : [];
+
+  if (!sheetId) {
+    return jsonResponse({ ok: false, message: "sheetId が未指定です" });
+  }
+  if (!sheetName) {
+    return jsonResponse({ ok: false, message: "sheetName が未指定です" });
+  }
+  if (rows.length === 0) {
+    return jsonResponse({ ok: false, message: "rows が空です" });
+  }
+
+  var ss = SpreadsheetApp.openById(sheetId);
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return jsonResponse({
+      ok: false,
+      message: "指定されたシート名が見つかりません: " + sheetName
+    });
+  }
+
+  var values = rows.map(function (row) {
+    return [String(row.C || ""), String(row.D || ""), String(row.E || "")];
+  });
+  if (values.length === 0) {
+    return jsonResponse({ ok: false, message: "書き込み対象データがありません" });
+  }
+
+  var lastRow = sheet.getLastRow();
+  var nextRow = Math.max(startRow, lastRow + 1);
+  sheet.getRange(nextRow, 3, values.length, 3).setValues(values); // C:D:E
+  sheet.getRange(nextRow, 3, values.length, 3).setFontFamily("Meiryo").setFontSize(10);
+
+  return jsonResponse({
+    ok: true,
+    sheetName: sheetName,
+    rowsWritten: values.length,
+    startRow: nextRow,
+    endRow: nextRow + values.length - 1,
+  });
+}
+
 function columnToLetter(column) {
   var letter = "";
   var temp = column;
@@ -220,6 +269,7 @@ VITE_RESIDENT_SHEET_WEBHOOK_URL=https://script.google.com/macros/s/xxxxxxxxxxxxx
 ## 3. 反映確認
 - 住民票モード: 書き込み先シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。
 - 基本モード: 表示シートを選択して `書き込み` を押し、反映成功メッセージが表示されること。
+- 住民票モード（住民票シート1）: `フォルダを読み込み` でフォルダを選択し、`C/D/E` 列へ `6` 行目以降に追記されること。
 
 ## 4. 初期化確認
 - シート選択UIの `初期化` を押し、対象レンジがクリアされること。

@@ -589,6 +589,20 @@ interface ResidentSheetWritePayload {
   };
 }
 
+interface ResidentFolderSheetWriteRow {
+  C: string;
+  D: string;
+  E: string;
+}
+
+interface ResidentFolderSheetWritePayload {
+  action: "appendResidentFolderRows";
+  sheetId: string;
+  sheetName: string;
+  startRow: number;
+  rows: ResidentFolderSheetWriteRow[];
+}
+
 interface BasicSheetWritePayload {
   action: "appendBasicRow";
   sheetId: string;
@@ -632,6 +646,9 @@ interface SpreadsheetSheetTab {
 interface ResidentSheetWebhookResponse {
   ok: boolean;
   row?: number;
+  rowsWritten?: number;
+  startRow?: number;
+  endRow?: number;
   sheetName?: string;
   sheetId?: string;
   clearedRange?: string;
@@ -669,8 +686,59 @@ const joinBasicAddressForSheet = (parts: string[]): string => {
   return parts.map((part) => part.trim()).filter(Boolean).join("");
 };
 
+const TIFF_EXTENSION_PATTERN = /\.tiff?$/i;
+
+const buildResidentFolderSheetRows = (files: File[]): ResidentFolderSheetWriteRow[] => {
+  const tifEntries = files
+    .map((file) => {
+      const relativePath = (file.webkitRelativePath ?? "").trim();
+      if (!relativePath) {
+        return null;
+      }
+      if (!TIFF_EXTENSION_PATTERN.test(file.name)) {
+        return null;
+      }
+
+      const segments = relativePath.split("/").filter((segment) => segment.length > 0);
+      if (segments.length < 3) {
+        return null;
+      }
+
+      return {
+        rootFolder: segments[0],
+        childFolder: segments[1],
+        fileName: file.name,
+        sortKey: relativePath,
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        rootFolder: string;
+        childFolder: string;
+        fileName: string;
+        sortKey: string;
+      } => entry !== null
+    )
+    .sort((a, b) => {
+      const byChildFolder = a.childFolder.localeCompare(b.childFolder, "ja");
+      if (byChildFolder !== 0) {
+        return byChildFolder;
+      }
+      return a.sortKey.localeCompare(b.sortKey, "ja");
+    });
+
+  return tifEntries.map((entry) => ({
+    C: entry.rootFolder,
+    D: entry.childFolder,
+    E: entry.fileName,
+  }));
+};
+
 type ResidentSheetWebhookPayload =
   | ResidentSheetWritePayload
+  | ResidentFolderSheetWritePayload
   | ResidentSheetListPayload
   | BasicSheetWritePayload
   | SheetClearPayload;
@@ -891,6 +959,7 @@ export function DataEntryForm() {
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
   const [basicSheetSyncSuccess, setBasicSheetSyncSuccess] = useState("");
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
+  const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
   const [residentSheetSyncSuccess, setResidentSheetSyncSuccess] = useState("");
   const [isSheetInitializing, setIsSheetInitializing] = useState(false);
@@ -1047,6 +1116,7 @@ export function DataEntryForm() {
   });
   const basicFormRef = useRef<HTMLDivElement>(null);
   const residentFormRef = useRef<HTMLDivElement>(null);
+  const residentFolderInputRef = useRef<HTMLInputElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
   const requestSerialRef = useRef(0);
   const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
@@ -1085,6 +1155,16 @@ export function DataEntryForm() {
     mode === "basic"
       ? isTownComposing
       : residentComposing[residentActiveSection].town;
+
+  useEffect(() => {
+    const input = residentFolderInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+  }, [mode]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -2138,6 +2218,128 @@ export function DataEntryForm() {
       setResidentSheetSyncError(message);
     } finally {
       setIsResidentSheetSaving(false);
+    }
+  };
+
+  const handleResidentFolderImportClick = () => {
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    if (residentSheetSelection !== "residentPrimary") {
+      setResidentSheetSyncError(
+        "フォルダ読み込みは住民票シート1選択時のみ実行できます。"
+      );
+      return;
+    }
+
+    const input = residentFolderInputRef.current;
+    if (!input) {
+      setResidentSheetSyncError(
+        "フォルダ選択入力の初期化に失敗しました。画面を再読み込みしてください。"
+      );
+      return;
+    }
+
+    input.value = "";
+    input.click();
+  };
+
+  const handleResidentFolderImportChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    if (residentSheetSelection !== "residentPrimary") {
+      setResidentSheetSyncError(
+        "フォルダ読み込みは住民票シート1選択時のみ実行できます。"
+      );
+      return;
+    }
+
+    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.residentPrimary);
+    if (!targetSheetId) {
+      setResidentSheetSyncError("シートIDを取得できないため、シート反映をスキップしました。");
+      return;
+    }
+
+    if (sheetTabLoadingBySheetId[targetSheetId]) {
+      setResidentSheetSyncError(
+        "シートタブ一覧を取得中です。少し待ってからフォルダ読み込みしてください。"
+      );
+      return;
+    }
+
+    const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
+    if (tabLoadError) {
+      setResidentSheetSyncError(
+        `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
+      );
+      return;
+    }
+
+    const normalizedTargetSheetName = (
+      selectedSheetTabBySheetId[targetSheetId] ?? ""
+    ).trim();
+    if (!normalizedTargetSheetName) {
+      setResidentSheetSyncError("書き込み先シートを選択してください。");
+      return;
+    }
+
+    const rows = buildResidentFolderSheetRows(files);
+    if (rows.length === 0) {
+      setResidentSheetSyncError(
+        "子フォルダ内に .tif または .tiff ファイルが見つかりません。"
+      );
+      return;
+    }
+
+    const payload: ResidentFolderSheetWritePayload = {
+      action: "appendResidentFolderRows",
+      sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
+      startRow: RESIDENT_SHEET_START_ROW,
+      rows,
+    };
+
+    setIsResidentFolderImporting(true);
+    try {
+      const result = await postSheetWebhook(
+        payload,
+        residentSheetWebhookConfig,
+        "住民票フォルダ書き込み"
+      );
+
+      if (result.sheetName && result.sheetName !== normalizedTargetSheetName) {
+        throw new Error(
+          "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+        );
+      }
+
+      const writtenCount =
+        typeof result.rowsWritten === "number" ? result.rowsWritten : rows.length;
+      const writtenRange =
+        typeof result.startRow === "number" && typeof result.endRow === "number"
+          ? `${result.startRow}行目〜${result.endRow}行目`
+          : `${writtenCount}行`;
+      setResidentSheetSyncSuccess(
+        `シート「${normalizedTargetSheetName}」へフォルダ情報を${writtenRange}で反映しました。`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "フォルダ読み込み中に不明なエラーが発生しました。";
+      setResidentSheetSyncError(message);
+    } finally {
+      setIsResidentFolderImporting(false);
     }
   };
 
@@ -4104,8 +4306,16 @@ export function DataEntryForm() {
                 </div>
               </div>
 
+              <input
+                ref={residentFolderInputRef}
+                type="file"
+                multiple
+                onChange={handleResidentFolderImportChange}
+                className="hidden"
+              />
+
               {/* ボタン */}
-              <div className="mt-6 flex gap-3">
+              <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={handleResidentSaveToList}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -4115,11 +4325,23 @@ export function DataEntryForm() {
                 </button>
                 <button
                   onClick={handleResidentWriteToSheet}
-                  disabled={isResidentSheetSaving}
+                  disabled={isResidentSheetSaving || isResidentFolderImporting}
                   className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Table2 className="w-4 h-4" />
                   {isResidentSheetSaving ? "書き込み中..." : "書き込み"}
+                </button>
+                <button
+                  onClick={handleResidentFolderImportClick}
+                  disabled={
+                    residentSheetSelection !== "residentPrimary" ||
+                    isResidentSheetSaving ||
+                    isResidentFolderImporting
+                  }
+                  className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  {isResidentFolderImporting ? "読込中..." : "フォルダを読み込み"}
                 </button>
                 <button
                   onClick={handleClear}
