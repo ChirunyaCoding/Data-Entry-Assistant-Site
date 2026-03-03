@@ -3783,10 +3783,6 @@ export function DataEntryForm() {
 
                 {residentSheetSelection === "residentSecondary" ? (
                   <div className="space-y-4">
-                    <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
-                      住民票シート2モード: フォルダ読込後、件数分の氏名入力欄が生成されます。書き込み時は
-                      B3からファイル名、C3から氏名を順に反映します。
-                    </div>
                     {residentSecondaryEntries.length === 0 ? (
                       <div className="rounded border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
                         フォルダを読み込むと、ファイル数分の氏名入力欄を表示します。
