@@ -1032,6 +1032,11 @@ export function DataEntryForm() {
   >([]);
   const [residentSecondaryWritingEntryId, setResidentSecondaryWritingEntryId] =
     useState<number | null>(null);
+  const [basicListWritingEntryId, setBasicListWritingEntryId] = useState<number | null>(
+    null
+  );
+  const [residentListWritingEntryId, setResidentListWritingEntryId] =
+    useState<number | null>(null);
   const [isBasicSheetSaving, setIsBasicSheetSaving] = useState(false);
   const [isBasicFolderImporting, setIsBasicFolderImporting] = useState(false);
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
@@ -1152,6 +1157,8 @@ export function DataEntryForm() {
     (entry) => entry.name.trim().length > 0
   ).length;
   const isResidentSecondaryEntryWriting = residentSecondaryWritingEntryId !== null;
+  const isBasicListEntryWriting = basicListWritingEntryId !== null;
+  const isResidentListEntryWriting = residentListWritingEntryId !== null;
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const residentSheetSelectionMessage =
     mode === "basic"
@@ -2143,24 +2150,20 @@ export function DataEntryForm() {
     }
   };
 
-  const handleBasicWriteToSheet = async () => {
-    const basicEntry = createBasicEntryFromForm();
-    setBasicSheetSyncError("");
-    setBasicSheetSyncSuccess("");
-
+  const resolveBasicSheetTargetForWrite = () => {
     const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.basic);
     if (!targetSheetId) {
       setBasicSheetSyncError(
         "シートIDを取得できないため、シート反映をスキップしました。"
       );
-      return;
+      return null;
     }
 
     if (sheetTabLoadingBySheetId[targetSheetId]) {
       setBasicSheetSyncError(
         "シートタブ一覧を取得中です。少し待ってから書き込みしてください。"
       );
-      return;
+      return null;
     }
 
     const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
@@ -2168,7 +2171,7 @@ export function DataEntryForm() {
       setBasicSheetSyncError(
         `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
       );
-      return;
+      return null;
     }
 
     const normalizedTargetSheetName = (
@@ -2176,9 +2179,20 @@ export function DataEntryForm() {
     ).trim();
     if (!normalizedTargetSheetName) {
       setBasicSheetSyncError("書き込み先シートを選択してください。");
-      return;
+      return null;
     }
 
+    return {
+      targetSheetId,
+      normalizedTargetSheetName,
+    };
+  };
+
+  const buildBasicSheetWritePayload = (
+    basicEntry: ReturnType<typeof createBasicEntryFromForm>,
+    targetSheetId: string,
+    normalizedTargetSheetName: string
+  ): BasicSheetWritePayload => {
     const integratedAddress = joinBasicAddressForSheet([
       basicEntry.prefecture,
       basicEntry.city,
@@ -2189,7 +2203,7 @@ export function DataEntryForm() {
       basicEntry.banchi,
     ]);
 
-    const payload: BasicSheetWritePayload = {
+    return {
       action: "appendBasicRow",
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
@@ -2207,18 +2221,46 @@ export function DataEntryForm() {
         J: basicEntry.notes,
       },
     };
+  };
 
-    setIsBasicSheetSaving(true);
+  const writeBasicEntryToSheet = async (
+    basicEntry: ReturnType<typeof createBasicEntryFromForm>,
+    targetSheetId: string,
+    normalizedTargetSheetName: string,
+    options?: {
+      singleEntryId?: number;
+      autoSaveToList?: boolean;
+    }
+  ) => {
+    const payload = buildBasicSheetWritePayload(
+      basicEntry,
+      targetSheetId,
+      normalizedTargetSheetName
+    );
+
+    if (typeof options?.singleEntryId === "number") {
+      setBasicListWritingEntryId(options.singleEntryId);
+    } else {
+      setIsBasicSheetSaving(true);
+    }
+
     try {
       const result = await postBasicSheetPayload(payload, basicSheetWebhookConfig);
       const successMessage =
         typeof result.row === "number"
           ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
           : `シート「${normalizedTargetSheetName}」へ反映しました。`;
-      setBasicSheetSyncSuccess(successMessage);
-      upsertBasicEntryToList(basicEntry, {
-        clearAfterSave: false,
-      });
+      const withItemMessage =
+        typeof options?.singleEntryId === "number"
+          ? `${successMessage}（保存済みリストの1件）`
+          : successMessage;
+      setBasicSheetSyncSuccess(withItemMessage);
+
+      if (options?.autoSaveToList ?? true) {
+        upsertBasicEntryToList(basicEntry, {
+          clearAfterSave: false,
+        });
+      }
     } catch (error) {
       const message =
         error instanceof Error
@@ -2226,8 +2268,52 @@ export function DataEntryForm() {
           : "シート反映中に不明なエラーが発生しました。";
       setBasicSheetSyncError(message);
     } finally {
-      setIsBasicSheetSaving(false);
+      if (typeof options?.singleEntryId === "number") {
+        setBasicListWritingEntryId(null);
+      } else {
+        setIsBasicSheetSaving(false);
+      }
     }
+  };
+
+  const handleBasicListOverwriteWrite = async (entry: SavedEntry) => {
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
+
+    const resolvedTarget = resolveBasicSheetTargetForWrite();
+    if (!resolvedTarget) {
+      return;
+    }
+
+    await writeBasicEntryToSheet(
+      entry,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName,
+      {
+        singleEntryId: entry.id,
+        autoSaveToList: false,
+      }
+    );
+  };
+
+  const handleBasicWriteToSheet = async () => {
+    const basicEntry = createBasicEntryFromForm();
+    setBasicSheetSyncError("");
+    setBasicSheetSyncSuccess("");
+
+    const resolvedTarget = resolveBasicSheetTargetForWrite();
+    if (!resolvedTarget) {
+      return;
+    }
+
+    await writeBasicEntryToSheet(
+      basicEntry,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName,
+      {
+        autoSaveToList: true,
+      }
+    );
   };
 
   const handleBasicFolderImportClick = () => {
@@ -2568,6 +2654,128 @@ export function DataEntryForm() {
     );
   };
 
+  const buildResidentPrimarySheetWritePayload = (
+    residentEntry: ReturnType<typeof createResidentEntryFromForm>,
+    targetSheetId: string,
+    normalizedTargetSheetName: string
+  ): ResidentSheetWritePayload => {
+    const departAddress = joinResidentAddressForSheet([
+      residentEntry.departPrefecture,
+      residentEntry.departCity,
+      residentEntry.departTown,
+      residentEntry.departOoaza,
+      residentEntry.departAza,
+      residentEntry.departKoaza,
+      residentEntry.departBanchi,
+    ]);
+    const registryAddress = joinResidentAddressForSheet([
+      residentEntry.registryPrefecture,
+      residentEntry.registryCity,
+      residentEntry.registryTown,
+      residentEntry.registryOoaza,
+      residentEntry.registryAza,
+      residentEntry.registryKoaza,
+      residentEntry.registryBanchi,
+    ]);
+
+    return {
+      sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
+      startRow: RESIDENT_SHEET_START_ROW,
+      values: {
+        B: residentEntry.residentSelfName,
+        F: residentEntry.departName,
+        G: departAddress,
+        H: residentEntry.departBuilding,
+        I: residentEntry.registryName,
+        J: registryAddress,
+        K: residentEntry.registryBuilding,
+        L: residentEntry.residentAlias,
+      },
+    };
+  };
+
+  const writeResidentPrimaryEntryToSheet = async (
+    residentEntry: ReturnType<typeof createResidentEntryFromForm>,
+    targetSheetId: string,
+    normalizedTargetSheetName: string,
+    options?: {
+      singleEntryId?: number;
+      autoSaveToList?: boolean;
+    }
+  ) => {
+    const payload = buildResidentPrimarySheetWritePayload(
+      residentEntry,
+      targetSheetId,
+      normalizedTargetSheetName
+    );
+
+    if (typeof options?.singleEntryId === "number") {
+      setResidentListWritingEntryId(options.singleEntryId);
+    } else {
+      setIsResidentSheetSaving(true);
+    }
+
+    try {
+      const result = await postResidentSheetPayload(
+        payload,
+        residentSheetWebhookConfig
+      );
+      const successMessage =
+        typeof result.row === "number"
+          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+          : `シート「${normalizedTargetSheetName}」へ反映しました。`;
+      const withItemMessage =
+        typeof options?.singleEntryId === "number"
+          ? `${successMessage}（保存済みリストの1件）`
+          : successMessage;
+      setResidentSheetSyncSuccess(withItemMessage);
+
+      if (options?.autoSaveToList ?? true) {
+        upsertResidentEntryToList(residentEntry, {
+          clearAfterSave: false,
+        });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "シート反映中に不明なエラーが発生しました。";
+      setResidentSheetSyncError(message);
+    } finally {
+      if (typeof options?.singleEntryId === "number") {
+        setResidentListWritingEntryId(null);
+      } else {
+        setIsResidentSheetSaving(false);
+      }
+    }
+  };
+
+  const handleResidentListOverwriteWrite = async (entry: SavedResidentEntry) => {
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    if (residentSheetSelection !== "residentPrimary") {
+      setResidentSheetSyncError("住民票シート1を選択してから実行してください。");
+      return;
+    }
+
+    const resolvedTarget = resolveResidentSheetTargetForWrite();
+    if (!resolvedTarget) {
+      return;
+    }
+
+    await writeResidentPrimaryEntryToSheet(
+      entry,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName,
+      {
+        singleEntryId: entry.id,
+        autoSaveToList: false,
+      }
+    );
+  };
+
   const handleResidentWriteToSheet = async () => {
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
@@ -2595,64 +2803,14 @@ export function DataEntryForm() {
     }
 
     const residentEntry = createResidentEntryFromForm();
-    const departAddress = joinResidentAddressForSheet([
-      residentEntry.departPrefecture,
-      residentEntry.departCity,
-      residentEntry.departTown,
-      residentEntry.departOoaza,
-      residentEntry.departAza,
-      residentEntry.departKoaza,
-      residentEntry.departBanchi,
-    ]);
-    const registryAddress = joinResidentAddressForSheet([
-      residentEntry.registryPrefecture,
-      residentEntry.registryCity,
-      residentEntry.registryTown,
-      residentEntry.registryOoaza,
-      residentEntry.registryAza,
-      residentEntry.registryKoaza,
-      residentEntry.registryBanchi,
-    ]);
-
-    const payload: ResidentSheetWritePayload = {
-      sheetId: resolvedTarget.targetSheetId,
-      sheetName: resolvedTarget.normalizedTargetSheetName,
-      startRow: RESIDENT_SHEET_START_ROW,
-      values: {
-        B: residentEntry.residentSelfName,
-        F: residentEntry.departName,
-        G: departAddress,
-        H: residentEntry.departBuilding,
-        I: residentEntry.registryName,
-        J: registryAddress,
-        K: residentEntry.registryBuilding,
-        L: residentEntry.residentAlias,
-      },
-    };
-
-    setIsResidentSheetSaving(true);
-    try {
-      const result = await postResidentSheetPayload(
-        payload,
-        residentSheetWebhookConfig
-      );
-      const successMessage =
-        typeof result.row === "number"
-          ? `シート「${resolvedTarget.normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
-          : `シート「${resolvedTarget.normalizedTargetSheetName}」へ反映しました。`;
-      setResidentSheetSyncSuccess(successMessage);
-      upsertResidentEntryToList(residentEntry, {
-        clearAfterSave: false,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "シート反映中に不明なエラーが発生しました。";
-      setResidentSheetSyncError(message);
-    } finally {
-      setIsResidentSheetSaving(false);
-    }
+    await writeResidentPrimaryEntryToSheet(
+      residentEntry,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName,
+      {
+        autoSaveToList: true,
+      }
+    );
   };
 
   const handleResidentFolderImportClick = () => {
@@ -2893,6 +3051,8 @@ export function DataEntryForm() {
   const handleClear = () => {
     setEditingBasicEntryId(null);
     setEditingResidentEntryId(null);
+    setBasicListWritingEntryId(null);
+    setResidentListWritingEntryId(null);
 
     if (mode === "basic") {
       setFormData({
@@ -2950,11 +3110,13 @@ export function DataEntryForm() {
   const handleDeleteEntry = (id: number) => {
     setSavedEntries((prev) => prev.filter((entry) => entry.id !== id));
     setEditingBasicEntryId((prev) => (prev === id ? null : prev));
+    setBasicListWritingEntryId((prev) => (prev === id ? null : prev));
   };
 
   const handleDeleteResidentEntry = (id: number) => {
     setSavedResidentEntries((prev) => prev.filter((entry) => entry.id !== id));
     setEditingResidentEntryId((prev) => (prev === id ? null : prev));
+    setResidentListWritingEntryId((prev) => (prev === id ? null : prev));
   };
 
   const handleEditEntry = (entry: SavedEntry) => {
@@ -3804,6 +3966,7 @@ export function DataEntryForm() {
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={handleBasicSaveToList}
+                  disabled={isBasicSheetSaving || isBasicFolderImporting || isBasicListEntryWriting}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
@@ -3811,7 +3974,9 @@ export function DataEntryForm() {
                 </button>
                 <button
                   onClick={handleBasicWriteToSheet}
-                  disabled={isBasicSheetSaving || isBasicFolderImporting}
+                  disabled={
+                    isBasicSheetSaving || isBasicFolderImporting || isBasicListEntryWriting
+                  }
                   className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Table2 className="w-4 h-4" />
@@ -3819,7 +3984,9 @@ export function DataEntryForm() {
                 </button>
                 <button
                   onClick={handleBasicFolderImportClick}
-                  disabled={isBasicSheetSaving || isBasicFolderImporting}
+                  disabled={
+                    isBasicSheetSaving || isBasicFolderImporting || isBasicListEntryWriting
+                  }
                   className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Upload className="w-4 h-4" />
@@ -3827,6 +3994,7 @@ export function DataEntryForm() {
                 </button>
                 <button
                   onClick={handleClear}
+                  disabled={isBasicListEntryWriting}
                   className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                 >
                   クリア
@@ -3896,15 +4064,41 @@ export function DataEntryForm() {
                           </div>
                           <div className="ml-3 flex items-center gap-1">
                             <button
+                              onClick={() => {
+                                void handleBasicListOverwriteWrite(entry);
+                              }}
+                              disabled={
+                                isBasicSheetSaving ||
+                                isBasicFolderImporting ||
+                                isBasicListEntryWriting
+                              }
+                              className="px-2 py-1 rounded border border-emerald-300 text-emerald-700 text-xs hover:bg-emerald-50 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed"
+                              title="上書き書き込み"
+                            >
+                              {basicListWritingEntryId === entry.id
+                                ? "上書き中..."
+                                : "上書き書き込み"}
+                            </button>
+                            <button
                               onClick={() => handleDeleteEntry(entry.id)}
-                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                              disabled={
+                                isBasicSheetSaving ||
+                                isBasicFolderImporting ||
+                                isBasicListEntryWriting
+                              }
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
                               title="削除"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => handleEditEntry(entry)}
-                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                              disabled={
+                                isBasicSheetSaving ||
+                                isBasicFolderImporting ||
+                                isBasicListEntryWriting
+                              }
+                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
                               title="編集"
                             >
                               <Pencil className="w-4 h-4" />
@@ -4847,7 +5041,8 @@ export function DataEntryForm() {
                     disabled={
                       isResidentSheetSaving ||
                       isResidentFolderImporting ||
-                      isResidentSecondaryEntryWriting
+                      isResidentSecondaryEntryWriting ||
+                      isResidentListEntryWriting
                     }
                     className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
@@ -4860,6 +5055,7 @@ export function DataEntryForm() {
                       isResidentSheetSaving ||
                       isResidentFolderImporting ||
                       isResidentSecondaryEntryWriting ||
+                      isResidentListEntryWriting ||
                       residentSecondaryNamedEntryCount === 0
                     }
                     className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -4869,7 +5065,7 @@ export function DataEntryForm() {
                   </button>
                   <button
                     onClick={handleClear}
-                    disabled={isResidentSecondaryEntryWriting}
+                    disabled={isResidentSecondaryEntryWriting || isResidentListEntryWriting}
                     className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
                     クリア
@@ -4879,6 +5075,11 @@ export function DataEntryForm() {
                 <div className="mt-6 flex flex-wrap gap-3">
                   <button
                     onClick={handleResidentSaveToList}
+                    disabled={
+                      isResidentSheetSaving ||
+                      isResidentFolderImporting ||
+                      isResidentListEntryWriting
+                    }
                     className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Save className="w-4 h-4" />
@@ -4888,7 +5089,11 @@ export function DataEntryForm() {
                   </button>
                   <button
                     onClick={handleResidentWriteToSheet}
-                    disabled={isResidentSheetSaving || isResidentFolderImporting}
+                    disabled={
+                      isResidentSheetSaving ||
+                      isResidentFolderImporting ||
+                      isResidentListEntryWriting
+                    }
                     className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Table2 className="w-4 h-4" />
@@ -4899,7 +5104,8 @@ export function DataEntryForm() {
                     disabled={
                       residentSheetSelection !== "residentPrimary" ||
                       isResidentSheetSaving ||
-                      isResidentFolderImporting
+                      isResidentFolderImporting ||
+                      isResidentListEntryWriting
                     }
                     className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
@@ -4908,6 +5114,7 @@ export function DataEntryForm() {
                   </button>
                   <button
                     onClick={handleClear}
+                    disabled={isResidentListEntryWriting}
                     className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
                     クリア
@@ -5001,15 +5208,41 @@ export function DataEntryForm() {
                             </div>
                             <div className="ml-3 flex items-center gap-1">
                               <button
+                                onClick={() => {
+                                  void handleResidentListOverwriteWrite(entry);
+                                }}
+                                disabled={
+                                  isResidentSheetSaving ||
+                                  isResidentFolderImporting ||
+                                  isResidentListEntryWriting
+                                }
+                                className="px-2 py-1 rounded border border-emerald-300 text-emerald-700 text-xs hover:bg-emerald-50 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed"
+                                title="上書き書き込み"
+                              >
+                                {residentListWritingEntryId === entry.id
+                                  ? "上書き中..."
+                                  : "上書き書き込み"}
+                              </button>
+                              <button
                                 onClick={() => handleDeleteResidentEntry(entry.id)}
-                                className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                                disabled={
+                                  isResidentSheetSaving ||
+                                  isResidentFolderImporting ||
+                                  isResidentListEntryWriting
+                                }
+                                className="p-2 text-gray-400 hover:text-red-600 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
                                 title="削除"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => handleEditResidentEntry(entry)}
-                                className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                                disabled={
+                                  isResidentSheetSaving ||
+                                  isResidentFolderImporting ||
+                                  isResidentListEntryWriting
+                                }
+                                className="p-2 text-gray-400 hover:text-blue-600 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
                                 title="編集"
                               >
                                 <Pencil className="w-4 h-4" />
