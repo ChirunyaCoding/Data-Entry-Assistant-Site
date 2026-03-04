@@ -6,11 +6,10 @@
 - `package-lock.json`
 
 ## スコープ
-- 基本モードでは、表示シートを以下のURLに固定する。
-  - `https://docs.google.com/spreadsheets/d/1ihPDR7CxURU27nerMxHcuz4LsnleEn5w/edit?usp=sharing&ouid=103802180099597441912&rtpof=true&sd=true`
-- 住民票モードでは、表示シートを以下2つの固定URLから切替可能にする。
-  - `https://docs.google.com/spreadsheets/d/1rXxUwKkhnzholAW7AfNSJ_jfhSL2oPCHhobkZt96rh0/edit?usp=sharing`
-  - `https://docs.google.com/spreadsheets/d/1vhmwu7PC_VYxmTgWHYChstsNeZEY0JgRgf_t2bWKQuI/edit?usp=sharing`
+- 基本モードでは、表示シートを環境変数 `VITE_BASIC_SHEET_URL` に固定する。
+- 住民票モードでは、表示シートを以下2つの環境変数から切替可能にする。
+  - `VITE_RESIDENT_PRIMARY_SHEET_URL`
+  - `VITE_RESIDENT_SECONDARY_SHEET_URL`
 - 既存の手入力URL欄を廃止し、固定選択UIに置き換える。
 - 住民票モードの選択状態は `localStorage` に保存し、再訪時に復元する。
 

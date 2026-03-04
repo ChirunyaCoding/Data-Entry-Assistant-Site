@@ -208,6 +208,13 @@ const BASIC_SHEET_WEBHOOK_URL = (
 const RESIDENT_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
 ).trim();
+const BASIC_SHEET_URL = (import.meta.env.VITE_BASIC_SHEET_URL ?? "").trim();
+const RESIDENT_PRIMARY_SHEET_URL = (
+  import.meta.env.VITE_RESIDENT_PRIMARY_SHEET_URL ?? ""
+).trim();
+const RESIDENT_SECONDARY_SHEET_URL = (
+  import.meta.env.VITE_RESIDENT_SECONDARY_SHEET_URL ?? ""
+).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
 const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
@@ -218,12 +225,9 @@ const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
-  basic:
-    "https://docs.google.com/spreadsheets/d/1EScIk20fx6oTDj43-xF0LeHYJzCUSNp2dMlNvHOsIRU/edit?usp=sharing",
-  residentPrimary:
-    "https://docs.google.com/spreadsheets/d/1rXxUwKkhnzholAW7AfNSJ_jfhSL2oPCHhobkZt96rh0/edit?usp=sharing",
-  residentSecondary:
-    "https://docs.google.com/spreadsheets/d/1vhmwu7PC_VYxmTgWHYChstsNeZEY0JgRgf_t2bWKQuI/edit?usp=sharing",
+  basic: BASIC_SHEET_URL,
+  residentPrimary: RESIDENT_PRIMARY_SHEET_URL,
+  residentSecondary: RESIDENT_SECONDARY_SHEET_URL,
 } as const;
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
 

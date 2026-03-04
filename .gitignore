@@ -1,2 +1,5 @@
 /AGENTS.md
 backups
+.env
+.env.*
+!.env.example
