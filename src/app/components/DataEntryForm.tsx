@@ -79,27 +79,6 @@ interface SheetWritePosition {
   row: number;
 }
 
-interface LocalExcelWritable {
-  write: (data: ArrayBuffer | Uint8Array | Blob | string) => Promise<void>;
-  close: () => Promise<void>;
-}
-
-interface LocalExcelFileHandle {
-  name?: string;
-  createWritable: () => Promise<LocalExcelWritable>;
-}
-
-type FilePickerWindow = Window & {
-  showSaveFilePicker?: (options?: {
-    suggestedName?: string;
-    types?: Array<{
-      description?: string;
-      accept: Record<string, string[]>;
-    }>;
-    excludeAcceptAllOption?: boolean;
-  }) => Promise<LocalExcelFileHandle>;
-};
-
 interface ResidentSecondaryEntry {
   id: number;
   fileName: string;
@@ -237,7 +216,6 @@ const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1"
 const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
-const DEFAULT_EXCEL_FILE_NAME = "データ入力補助ツール.xlsx";
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 const FIXED_SHEET_URLS = {
   basic:
@@ -301,158 +279,6 @@ const RESIDENT_DETAIL_ADDRESS_FIELDS = new Set<string>([
   "residentAlias",
 ]);
 type ResidentFieldName = (typeof RESIDENT_FIELD_ORDER)[number];
-type XlsxModule = typeof import("xlsx");
-
-let cachedXlsxModule: XlsxModule | null = null;
-
-const loadXlsxModule = async (): Promise<XlsxModule> => {
-  if (cachedXlsxModule) {
-    return cachedXlsxModule;
-  }
-  cachedXlsxModule = await import("xlsx");
-  return cachedXlsxModule;
-};
-
-const buildAutoSaveWorkbookBinary = async (params: {
-  savedEntries: SavedEntry[];
-  savedResidentEntries: SavedResidentEntry[];
-  residentSecondaryEntries: ResidentSecondaryEntry[];
-}): Promise<ArrayBuffer> => {
-  const XLSX = await loadXlsxModule();
-  const workbook = XLSX.utils.book_new();
-
-  const basicSheetData = [
-    [
-      "id",
-      "savedAt",
-      "入力者",
-      "ファイル名",
-      "郵便番号",
-      "都道府県",
-      "市区町村",
-      "町域",
-      "大字",
-      "字",
-      "小字",
-      "番地",
-      "建物名",
-      "会社名",
-      "役職",
-      "氏名",
-      "電話番号",
-      "備考",
-    ],
-    ...params.savedEntries.map((entry) => [
-      entry.id,
-      entry.savedAt,
-      entry.operator,
-      entry.filename,
-      entry.postalCode,
-      entry.prefecture,
-      entry.city,
-      entry.town,
-      entry.ooaza,
-      entry.aza,
-      entry.koaza,
-      entry.banchi,
-      entry.building,
-      entry.company,
-      entry.position,
-      entry.name,
-      entry.phone,
-      entry.notes,
-    ]),
-  ];
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(basicSheetData),
-    "基本保存リスト"
-  );
-
-  const residentPrimarySheetData = [
-    [
-      "id",
-      "savedAt",
-      "自分の名前",
-      "転出 氏名",
-      "転出 都道府県",
-      "転出 市区町村",
-      "転出 町域",
-      "転出 大字",
-      "転出 字",
-      "転出 小字",
-      "転出 番地",
-      "転出 建物名",
-      "本籍 氏名",
-      "本籍 都道府県",
-      "本籍 市区町村",
-      "本籍 町域",
-      "本籍 大字",
-      "本籍 字",
-      "本籍 小字",
-      "本籍 番地",
-      "本籍 建物名",
-      "通称・別名",
-    ],
-    ...params.savedResidentEntries.map((entry) => [
-      entry.id,
-      entry.savedAt,
-      entry.residentSelfName,
-      entry.departName,
-      entry.departPrefecture,
-      entry.departCity,
-      entry.departTown,
-      entry.departOoaza,
-      entry.departAza,
-      entry.departKoaza,
-      entry.departBanchi,
-      entry.departBuilding,
-      entry.registryName,
-      entry.registryPrefecture,
-      entry.registryCity,
-      entry.registryTown,
-      entry.registryOoaza,
-      entry.registryAza,
-      entry.registryKoaza,
-      entry.registryBanchi,
-      entry.registryBuilding,
-      entry.residentAlias,
-    ]),
-  ];
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(residentPrimarySheetData),
-    "住民票保存リスト"
-  );
-
-  const residentSecondarySheetData = [
-    ["id", "ファイル名", "氏名"],
-    ...params.residentSecondaryEntries.map((entry) => [entry.id, entry.fileName, entry.name]),
-  ];
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(residentSecondarySheetData),
-    "住民票シート2入力"
-  );
-
-  const summarySheetData = [
-    ["自動保存時刻", new Date().toISOString()],
-    ["基本保存リスト件数", params.savedEntries.length],
-    ["住民票保存リスト件数", params.savedResidentEntries.length],
-    ["住民票シート2入力件数", params.residentSecondaryEntries.length],
-  ];
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(summarySheetData),
-    "保存情報"
-  );
-
-  return XLSX.write(workbook, {
-    bookType: "xlsx",
-    type: "array",
-    compression: true,
-  }) as ArrayBuffer;
-};
 
 const isResidentFieldName = (fieldName: string): fieldName is ResidentFieldName => {
   return RESIDENT_FIELD_ORDER.includes(fieldName as ResidentFieldName);
@@ -1296,14 +1122,6 @@ export function DataEntryForm() {
   const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
   const [residentSheetSyncSuccess, setResidentSheetSyncSuccess] = useState("");
-  const [excelAutoSaveHandle, setExcelAutoSaveHandle] = useState<LocalExcelFileHandle | null>(
-    null
-  );
-  const [excelAutoSaveFileName, setExcelAutoSaveFileName] = useState("");
-  const [excelAutoSaveError, setExcelAutoSaveError] = useState("");
-  const [excelAutoSaveSuccess, setExcelAutoSaveSuccess] = useState("");
-  const [isExcelAutoSaving, setIsExcelAutoSaving] = useState(false);
-  const [excelAutoSaveRequestSeq, setExcelAutoSaveRequestSeq] = useState(0);
   const [isSheetInitializing, setIsSheetInitializing] = useState(false);
   const [sheetInitializeError, setSheetInitializeError] = useState("");
   const [sheetInitializeSuccess, setSheetInitializeSuccess] = useState("");
@@ -1418,9 +1236,6 @@ export function DataEntryForm() {
   const isResidentSecondaryEntryWriting = residentSecondaryWritingEntryId !== null;
   const isBasicListEntryWriting = basicListWritingEntryId !== null;
   const isResidentListEntryWriting = residentListWritingEntryId !== null;
-  const isFilePickerSupported =
-    typeof window !== "undefined" &&
-    typeof (window as FilePickerWindow).showSaveFilePicker === "function";
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const residentSheetSelectionMessage =
     mode === "basic"
@@ -1471,8 +1286,6 @@ export function DataEntryForm() {
   const residentFolderInputRef = useRef<HTMLInputElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
   const requestSerialRef = useRef(0);
-  const excelAutoSaveActionLabelRef = useRef("書き込み");
-  const excelAutoSaveHandledSeqRef = useRef(0);
   const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
     postal: 0,
     prefecture: 0,
@@ -1650,75 +1463,6 @@ export function DataEntryForm() {
       // 保存に失敗した場合はメモリ上の値を使う
     }
   }, [selectedSheetTabBySheetId]);
-
-  useEffect(() => {
-    if (excelAutoSaveRequestSeq === 0) {
-      return;
-    }
-    if (excelAutoSaveHandledSeqRef.current === excelAutoSaveRequestSeq) {
-      return;
-    }
-    excelAutoSaveHandledSeqRef.current = excelAutoSaveRequestSeq;
-
-    if (!excelAutoSaveHandle) {
-      setExcelAutoSaveSuccess("");
-      setExcelAutoSaveError(
-        "Excel自動保存先が未設定です。保存先を選択してから書き込みしてください。"
-      );
-      return;
-    }
-
-    const actionLabel = excelAutoSaveActionLabelRef.current;
-
-    let canceled = false;
-    void (async () => {
-      setIsExcelAutoSaving(true);
-      try {
-        const workbookBinary = await buildAutoSaveWorkbookBinary({
-          savedEntries,
-          savedResidentEntries,
-          residentSecondaryEntries,
-        });
-        const writable = await excelAutoSaveHandle.createWritable();
-        await writable.write(workbookBinary);
-        await writable.close();
-        if (canceled) {
-          return;
-        }
-        const savedAt = new Date().toLocaleString("ja-JP");
-        const targetLabel = excelAutoSaveFileName || DEFAULT_EXCEL_FILE_NAME;
-        setExcelAutoSaveError("");
-        setExcelAutoSaveSuccess(
-          `Excel自動保存: ${targetLabel} を更新しました（${savedAt} / ${actionLabel}）`
-        );
-      } catch (error) {
-        if (canceled) {
-          return;
-        }
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Excel自動保存中に不明なエラーが発生しました。";
-        setExcelAutoSaveSuccess("");
-        setExcelAutoSaveError(message);
-      } finally {
-        if (!canceled) {
-          setIsExcelAutoSaving(false);
-        }
-      }
-    })();
-
-    return () => {
-      canceled = true;
-    };
-  }, [
-    excelAutoSaveFileName,
-    excelAutoSaveHandle,
-    excelAutoSaveRequestSeq,
-    residentSecondaryEntries,
-    savedEntries,
-    savedResidentEntries,
-  ]);
 
   useEffect(() => {
     if (!activeSheetId || hasLoadedActiveSheetTabs) {
@@ -2414,86 +2158,6 @@ export function DataEntryForm() {
     }
   };
 
-  const pickExcelAutoSaveFileHandle = async (
-    options?: {
-      forcePick?: boolean;
-      skipCancelError?: boolean;
-    }
-  ): Promise<LocalExcelFileHandle | null> => {
-    if (!options?.forcePick && excelAutoSaveHandle) {
-      return excelAutoSaveHandle;
-    }
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const pickerWindow = window as FilePickerWindow;
-    if (!pickerWindow.showSaveFilePicker) {
-      setExcelAutoSaveSuccess("");
-      setExcelAutoSaveError(
-        "このブラウザはローカルExcel自動保存に対応していません。ChromeまたはEdgeで実行してください。"
-      );
-      return null;
-    }
-
-    try {
-      const handle = await pickerWindow.showSaveFilePicker({
-        suggestedName: DEFAULT_EXCEL_FILE_NAME,
-        excludeAcceptAllOption: true,
-        types: [
-          {
-            description: "Excelブック",
-            accept: {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-            },
-          },
-        ],
-      });
-      setExcelAutoSaveHandle(handle);
-      setExcelAutoSaveFileName(handle.name?.trim() || DEFAULT_EXCEL_FILE_NAME);
-      setExcelAutoSaveError("");
-      setExcelAutoSaveSuccess(
-        `Excel自動保存先を設定しました: ${handle.name?.trim() || DEFAULT_EXCEL_FILE_NAME}`
-      );
-      return handle;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        if (!options?.skipCancelError) {
-          setExcelAutoSaveSuccess("");
-          setExcelAutoSaveError(
-            "Excel自動保存先の選択がキャンセルされたため、書き込みを中断しました。"
-          );
-        }
-        return null;
-      }
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Excel自動保存先の選択中に不明なエラーが発生しました。";
-      setExcelAutoSaveSuccess("");
-      setExcelAutoSaveError(message);
-      return null;
-    }
-  };
-
-  const ensureExcelAutoSaveReady = async (): Promise<boolean> => {
-    const handle = await pickExcelAutoSaveFileHandle();
-    return handle !== null;
-  };
-
-  const requestExcelAutoSave = (actionLabel: string) => {
-    excelAutoSaveActionLabelRef.current = actionLabel;
-    setExcelAutoSaveRequestSeq((prev) => prev + 1);
-  };
-
-  const handleSelectExcelAutoSaveFile = () => {
-    void pickExcelAutoSaveFileHandle({
-      forcePick: true,
-      skipCancelError: true,
-    });
-  };
-
   const createBasicEntryFromForm = () => {
     return {
       ...formData,
@@ -2759,10 +2423,6 @@ export function DataEntryForm() {
           writtenPosition,
         });
       }
-
-      const autoSaveActionLabel =
-        typeof options?.singleEntryId === "number" ? "基本 上書き書き込み" : "基本 書き込み";
-      requestExcelAutoSave(autoSaveActionLabel);
     } catch (error) {
       const message =
         error instanceof Error
@@ -2784,11 +2444,6 @@ export function DataEntryForm() {
 
     const resolvedTarget = resolveBasicSheetTargetForWrite();
     if (!resolvedTarget) {
-      return;
-    }
-
-    const isAutoSaveReady = await ensureExcelAutoSaveReady();
-    if (!isAutoSaveReady) {
       return;
     }
 
@@ -2818,11 +2473,6 @@ export function DataEntryForm() {
 
     const resolvedTarget = resolveBasicSheetTargetForWrite();
     if (!resolvedTarget) {
-      return;
-    }
-
-    const isAutoSaveReady = await ensureExcelAutoSaveReady();
-    if (!isAutoSaveReady) {
       return;
     }
 
@@ -3161,7 +2811,6 @@ export function DataEntryForm() {
           ? `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で1件反映しました。`
           : `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で反映しました。`;
       setResidentSheetSyncSuccess(successMessage);
-      requestExcelAutoSave(options?.actionLabel ?? "住民票シート2書き込み");
     } catch (error) {
       const message =
         error instanceof Error
@@ -3194,11 +2843,6 @@ export function DataEntryForm() {
 
     const resolvedTarget = resolveResidentSheetTargetForWrite();
     if (!resolvedTarget) {
-      return;
-    }
-
-    const isAutoSaveReady = await ensureExcelAutoSaveReady();
-    if (!isAutoSaveReady) {
       return;
     }
 
@@ -3345,12 +2989,6 @@ export function DataEntryForm() {
           writtenPosition,
         });
       }
-
-      const autoSaveActionLabel =
-        typeof options?.singleEntryId === "number"
-          ? "住民票シート1 上書き書き込み"
-          : "住民票シート1 書き込み";
-      requestExcelAutoSave(autoSaveActionLabel);
     } catch (error) {
       const message =
         error instanceof Error
@@ -3377,11 +3015,6 @@ export function DataEntryForm() {
 
     const resolvedTarget = resolveResidentSheetTargetForWrite();
     if (!resolvedTarget) {
-      return;
-    }
-
-    const isAutoSaveReady = await ensureExcelAutoSaveReady();
-    if (!isAutoSaveReady) {
       return;
     }
 
@@ -3421,22 +3054,12 @@ export function DataEntryForm() {
         return;
       }
 
-      const isAutoSaveReady = await ensureExcelAutoSaveReady();
-      if (!isAutoSaveReady) {
-        return;
-      }
-
       const rows = buildResidentSecondaryRowsForWrite(residentSecondaryEntries);
       await writeResidentSecondaryRowsToSheet(
         rows,
         resolvedTarget.targetSheetId,
         resolvedTarget.normalizedTargetSheetName
       );
-      return;
-    }
-
-    const isAutoSaveReady = await ensureExcelAutoSaveReady();
-    if (!isAutoSaveReady) {
       return;
     }
 
@@ -4059,41 +3682,6 @@ export function DataEntryForm() {
               <FileUser className="w-4 h-4" />
               住民票モード
             </button>
-          </div>
-
-          <div className="mb-6 rounded border border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-amber-900">ローカルExcel自動保存</p>
-                <p className="text-xs text-amber-700">
-                  {excelAutoSaveFileName
-                    ? `保存先: ${excelAutoSaveFileName}`
-                    : "保存先: 未選択（初回書き込み時に選択）"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleSelectExcelAutoSaveFile}
-                disabled={isExcelAutoSaving || !isFilePickerSupported}
-                className="px-3 py-2 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed"
-              >
-                保存先を選択
-              </button>
-            </div>
-            {isExcelAutoSaving && (
-              <p className="mt-2 text-xs text-amber-700">Excel自動保存中...</p>
-            )}
-            {excelAutoSaveSuccess && (
-              <p className="mt-2 text-xs text-green-700">{excelAutoSaveSuccess}</p>
-            )}
-            {excelAutoSaveError && (
-              <p className="mt-2 text-xs text-red-600">{excelAutoSaveError}</p>
-            )}
-            {!isFilePickerSupported && (
-              <p className="mt-2 text-xs text-red-600">
-                このブラウザはローカルExcel自動保存に対応していません（Chrome/Edge推奨）。
-              </p>
-            )}
           </div>
 
           {mode === "basic" ? (
