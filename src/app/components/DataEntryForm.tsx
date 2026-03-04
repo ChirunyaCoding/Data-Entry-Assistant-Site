@@ -1026,6 +1026,8 @@ export function DataEntryForm() {
   const [residentSecondaryEntries, setResidentSecondaryEntries] = useState<
     ResidentSecondaryEntry[]
   >([]);
+  const [residentSecondaryWritingEntryId, setResidentSecondaryWritingEntryId] =
+    useState<number | null>(null);
   const [isBasicSheetSaving, setIsBasicSheetSaving] = useState(false);
   const [isBasicFolderImporting, setIsBasicFolderImporting] = useState(false);
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
@@ -1142,6 +1144,10 @@ export function DataEntryForm() {
     isActiveSheetTabLoading ||
     activeSheetTabs.length === 0 ||
     !activeSelectedSheetName;
+  const residentSecondaryNamedEntryCount = residentSecondaryEntries.filter(
+    (entry) => entry.name.trim().length > 0
+  ).length;
+  const isResidentSecondaryEntryWriting = residentSecondaryWritingEntryId !== null;
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const residentSheetSelectionMessage =
     mode === "basic"
@@ -2329,23 +2335,20 @@ export function DataEntryForm() {
     handleClear();
   };
 
-  const handleResidentWriteToSheet = async () => {
-    setResidentSheetSyncError("");
-    setResidentSheetSyncSuccess("");
-
+  const resolveResidentSheetTargetForWrite = () => {
     const targetSheetId = extractGoogleSheetId(
       FIXED_SHEET_URLS[residentSheetSelection]
     );
     if (!targetSheetId) {
       setResidentSheetSyncError("シートIDを取得できないため、シート反映をスキップしました。");
-      return;
+      return null;
     }
 
     if (sheetTabLoadingBySheetId[targetSheetId]) {
       setResidentSheetSyncError(
         "シートタブ一覧を取得中です。少し待ってから書き込みしてください。"
       );
-      return;
+      return null;
     }
 
     const tabLoadError = sheetTabErrorBySheetId[targetSheetId];
@@ -2353,7 +2356,7 @@ export function DataEntryForm() {
       setResidentSheetSyncError(
         `シートタブ一覧を取得できないため書き込みできません。${tabLoadError}`
       );
-      return;
+      return null;
     }
 
     const normalizedTargetSheetName = (
@@ -2361,6 +2364,131 @@ export function DataEntryForm() {
     ).trim();
     if (!normalizedTargetSheetName) {
       setResidentSheetSyncError("書き込み先シートを選択してください。");
+      return null;
+    }
+
+    return {
+      targetSheetId,
+      normalizedTargetSheetName,
+    };
+  };
+
+  const buildResidentSecondaryRowsForWrite = (
+    entries: ResidentSecondaryEntry[]
+  ): ResidentSecondarySheetWriteRow[] => {
+    return entries
+      .map((entry) => ({
+        B: forceFullWidthText(entry.fileName),
+        C: entry.name.trim(),
+      }))
+      .filter((row) => row.C.length > 0);
+  };
+
+  const writeResidentSecondaryRowsToSheet = async (
+    rows: ResidentSecondarySheetWriteRow[],
+    targetSheetId: string,
+    normalizedTargetSheetName: string,
+    options?: {
+      singleEntryId?: number;
+      actionLabel?: string;
+    }
+  ) => {
+    if (rows.length === 0) {
+      setResidentSheetSyncError("氏名（C列）を1件以上入力してから書き込みしてください。");
+      return;
+    }
+
+    const payload: ResidentSecondarySheetWritePayload = {
+      action: "appendResidentSecondaryRows",
+      sheetId: targetSheetId,
+      sheetName: normalizedTargetSheetName,
+      startRow: RESIDENT_SECONDARY_SHEET_START_ROW,
+      rows,
+    };
+
+    if (typeof options?.singleEntryId === "number") {
+      setResidentSecondaryWritingEntryId(options.singleEntryId);
+    } else {
+      setIsResidentSheetSaving(true);
+    }
+
+    try {
+      const result = await postSheetWebhook(
+        payload,
+        residentSheetWebhookConfig,
+        options?.actionLabel ?? "住民票シート2書き込み"
+      );
+
+      if (result.sheetName && result.sheetName !== normalizedTargetSheetName) {
+        throw new Error(
+          "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
+        );
+      }
+
+      const writtenCount =
+        typeof result.rowsWritten === "number" ? result.rowsWritten : rows.length;
+      const writtenRange =
+        typeof result.startRow === "number" && typeof result.endRow === "number"
+          ? `${result.startRow}行目〜${result.endRow}行目`
+          : `${writtenCount}行`;
+      const successMessage =
+        rows.length === 1
+          ? `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で1件反映しました。`
+          : `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で反映しました。`;
+      setResidentSheetSyncSuccess(successMessage);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "シート反映中に不明なエラーが発生しました。";
+      setResidentSheetSyncError(message);
+    } finally {
+      if (typeof options?.singleEntryId === "number") {
+        setResidentSecondaryWritingEntryId(null);
+      } else {
+        setIsResidentSheetSaving(false);
+      }
+    }
+  };
+
+  const handleResidentSecondaryOverwriteWrite = async (entryId: number) => {
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    const targetEntry = residentSecondaryEntries.find((entry) => entry.id === entryId);
+    if (!targetEntry) {
+      setResidentSheetSyncError("対象データが見つかりません。");
+      return;
+    }
+
+    if (targetEntry.name.trim().length === 0) {
+      setResidentSheetSyncError("氏名（C列）を入力してから上書き書き込みしてください。");
+      return;
+    }
+
+    const resolvedTarget = resolveResidentSheetTargetForWrite();
+    if (!resolvedTarget) {
+      return;
+    }
+
+    const rows = buildResidentSecondaryRowsForWrite([targetEntry]);
+    await writeResidentSecondaryRowsToSheet(
+      rows,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName,
+      {
+        singleEntryId: entryId,
+        actionLabel: "住民票シート2個別上書き",
+      }
+    );
+  };
+
+  const handleResidentWriteToSheet = async () => {
+    setResidentSheetSyncError("");
+    setResidentSheetSyncSuccess("");
+
+    const resolvedTarget = resolveResidentSheetTargetForWrite();
+    if (!resolvedTarget) {
       return;
     }
 
@@ -2372,53 +2500,12 @@ export function DataEntryForm() {
         return;
       }
 
-      const rows: ResidentSecondarySheetWriteRow[] = residentSecondaryEntries.map(
-        (entry) => ({
-          B: forceFullWidthText(entry.fileName),
-          C: entry.name.trim(),
-        })
-      );
-
-      const payload: ResidentSecondarySheetWritePayload = {
-        action: "appendResidentSecondaryRows",
-        sheetId: targetSheetId,
-        sheetName: normalizedTargetSheetName,
-        startRow: RESIDENT_SECONDARY_SHEET_START_ROW,
+      const rows = buildResidentSecondaryRowsForWrite(residentSecondaryEntries);
+      await writeResidentSecondaryRowsToSheet(
         rows,
-      };
-
-      setIsResidentSheetSaving(true);
-      try {
-        const result = await postSheetWebhook(
-          payload,
-          residentSheetWebhookConfig,
-          "住民票シート2書き込み"
-        );
-
-        if (result.sheetName && result.sheetName !== normalizedTargetSheetName) {
-          throw new Error(
-            "Webhook応答に sheetName が含まれていないか不一致です。Apps Scriptを最新コードへ更新してください。"
-          );
-        }
-
-        const writtenCount =
-          typeof result.rowsWritten === "number" ? result.rowsWritten : rows.length;
-        const writtenRange =
-          typeof result.startRow === "number" && typeof result.endRow === "number"
-            ? `${result.startRow}行目〜${result.endRow}行目`
-            : `${writtenCount}行`;
-        setResidentSheetSyncSuccess(
-          `シート「${normalizedTargetSheetName}」のB/C列へ${writtenRange}で反映しました。`
-        );
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "シート反映中に不明なエラーが発生しました。";
-        setResidentSheetSyncError(message);
-      } finally {
-        setIsResidentSheetSaving(false);
-      }
+        resolvedTarget.targetSheetId,
+        resolvedTarget.normalizedTargetSheetName
+      );
       return;
     }
 
@@ -2443,8 +2530,8 @@ export function DataEntryForm() {
     ]);
 
     const payload: ResidentSheetWritePayload = {
-      sheetId: targetSheetId,
-      sheetName: normalizedTargetSheetName,
+      sheetId: resolvedTarget.targetSheetId,
+      sheetName: resolvedTarget.normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
       values: {
         B: residentEntry.residentSelfName,
@@ -2466,8 +2553,8 @@ export function DataEntryForm() {
       );
       const successMessage =
         typeof result.row === "number"
-          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
-          : `シート「${normalizedTargetSheetName}」へ反映しました。`;
+          ? `シート「${resolvedTarget.normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+          : `シート「${resolvedTarget.normalizedTargetSheetName}」へ反映しました。`;
       setResidentSheetSyncSuccess(successMessage);
     } catch (error) {
       const message =
@@ -2519,6 +2606,7 @@ export function DataEntryForm() {
       }
 
       setResidentSecondaryEntries(entries);
+      setResidentSecondaryWritingEntryId(null);
       setResidentSheetSyncSuccess(
         `${entries.length}件のファイルを読み込みました。氏名を入力して書き込みしてください。`
       );
@@ -2762,6 +2850,7 @@ export function DataEntryForm() {
         residentAlias: "",
       });
       setResidentSecondaryEntries([]);
+      setResidentSecondaryWritingEntryId(null);
       setResidentSheetSyncError("");
       setResidentSheetSyncSuccess("");
     }
@@ -3812,6 +3901,24 @@ export function DataEntryForm() {
                               className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="氏名を入力"
                             />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleResidentSecondaryOverwriteWrite(entry.id);
+                              }}
+                              disabled={
+                                isResidentSheetSaving ||
+                                isResidentFolderImporting ||
+                                isResidentSecondaryEntryWriting ||
+                                entry.name.trim().length === 0
+                              }
+                              className="mt-2 w-full px-3 py-2 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                              <Table2 className="w-4 h-4" />
+                              {residentSecondaryWritingEntryId === entry.id
+                                ? "上書き中..."
+                                : "上書き書き込み"}
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -4642,7 +4749,11 @@ export function DataEntryForm() {
                 <div className="mt-6 flex flex-wrap gap-3">
                   <button
                     onClick={handleResidentFolderImportClick}
-                    disabled={isResidentSheetSaving || isResidentFolderImporting}
+                    disabled={
+                      isResidentSheetSaving ||
+                      isResidentFolderImporting ||
+                      isResidentSecondaryEntryWriting
+                    }
                     className="flex-1 px-4 py-2.5 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-cyan-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Upload className="w-4 h-4" />
@@ -4653,7 +4764,8 @@ export function DataEntryForm() {
                     disabled={
                       isResidentSheetSaving ||
                       isResidentFolderImporting ||
-                      residentSecondaryEntries.length === 0
+                      isResidentSecondaryEntryWriting ||
+                      residentSecondaryNamedEntryCount === 0
                     }
                     className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
@@ -4662,6 +4774,7 @@ export function DataEntryForm() {
                   </button>
                   <button
                     onClick={handleClear}
+                    disabled={isResidentSecondaryEntryWriting}
                     className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
                     クリア

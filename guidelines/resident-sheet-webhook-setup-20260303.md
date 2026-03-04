@@ -136,8 +136,8 @@ function handleAppendBasicRow(payload) {
     });
   }
 
-  var lastRow = sheet.getLastRow();
-  var nextRow = Math.max(startRow, lastRow + 1);
+  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 1, 10);
+  ensureRowsForWrite(sheet, nextRow, 1);
 
   sheet.getRange(nextRow, 1).setValue(values.A || "");  // A
   sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
@@ -221,8 +221,8 @@ function handleAppendResidentRow(payload) {
     });
   }
 
-  var lastRow = sheet.getLastRow();
-  var nextRow = Math.max(startRow, lastRow + 1);
+  var nextRow = findFirstEmptyRowByColumns(sheet, startRow, [2, 6, 7, 8, 9, 10, 11, 12]);
+  ensureRowsForWrite(sheet, nextRow, 1);
 
   sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
   sheet.getRange(nextRow, 6).setValue(values.F || "");  // F
@@ -311,21 +311,54 @@ function handleAppendResidentSecondaryRows(payload) {
     });
   }
 
-  var values = rows.map(function (row) {
-    return [String(row.B || ""), String(row.C || "")];
+  var normalizedRows = rows
+    .map(function (row) {
+      return {
+        B: String(row.B || ""),
+        C: String(row.C || "").trim(),
+      };
+    })
+    .filter(function (row) {
+      return row.C !== "";
+    });
+  if (normalizedRows.length === 0) {
+    return jsonResponse({ ok: false, message: "C列に書き込む値がありません" });
+  }
+
+  var writtenRows = [];
+  normalizedRows.forEach(function (row) {
+    var targetRow = row.B
+      ? findFirstRowByColumnValue(sheet, startRow, 2, row.B)
+      : -1;
+
+    if (targetRow < startRow) {
+      targetRow = findFirstEmptyRowInColumns(sheet, startRow, 3, 1); // C列
+    }
+
+    ensureRowsForWrite(sheet, targetRow, 1);
+
+    if (row.B) {
+      var currentB = String(sheet.getRange(targetRow, 2).getDisplayValue() || "").trim();
+      if (currentB === "") {
+        sheet.getRange(targetRow, 2).setValue(row.B);
+      }
+    }
+
+    sheet.getRange(targetRow, 3).setValue(row.C);
+    sheet.getRange(targetRow, 2, 1, 2).setFontFamily("Meiryo").setFontSize(10);
+    writtenRows.push(targetRow);
   });
 
-  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 2, 2);
-  ensureRowsForWrite(sheet, nextRow, values.length);
-  sheet.getRange(nextRow, 2, values.length, 2).setValues(values); // B:C
-  sheet.getRange(nextRow, 2, values.length, 2).setFontFamily("Meiryo").setFontSize(10);
+  writtenRows.sort(function (a, b) {
+    return a - b;
+  });
 
   return jsonResponse({
     ok: true,
     sheetName: sheetName,
-    rowsWritten: values.length,
-    startRow: nextRow,
-    endRow: nextRow + values.length - 1,
+    rowsWritten: writtenRows.length,
+    startRow: writtenRows[0],
+    endRow: writtenRows[writtenRows.length - 1],
   });
 }
 
@@ -351,6 +384,51 @@ function findFirstEmptyRowInColumns(sheet, startRow, startColumn, columnCount) {
   }
 
   return maxRows + 1;
+}
+
+function findFirstEmptyRowByColumns(sheet, startRow, columns) {
+  var maxRows = sheet.getMaxRows();
+  if (startRow > maxRows) {
+    return startRow;
+  }
+
+  var rowCount = maxRows - startRow + 1;
+  var columnValues = columns.map(function (column) {
+    return sheet.getRange(startRow, column, rowCount, 1).getDisplayValues();
+  });
+
+  for (var rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+    var hasValue = columnValues.some(function (values) {
+      return String(values[rowIndex][0] || "").trim() !== "";
+    });
+    if (!hasValue) {
+      return startRow + rowIndex;
+    }
+  }
+
+  return maxRows + 1;
+}
+
+function findFirstRowByColumnValue(sheet, startRow, column, value) {
+  var maxRows = sheet.getMaxRows();
+  if (startRow > maxRows) {
+    return -1;
+  }
+
+  var targetValue = String(value || "").trim();
+  if (targetValue === "") {
+    return -1;
+  }
+
+  var rowCount = maxRows - startRow + 1;
+  var values = sheet.getRange(startRow, column, rowCount, 1).getDisplayValues();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0] || "").trim() === targetValue) {
+      return startRow + i;
+    }
+  }
+
+  return -1;
 }
 
 function ensureRowsForWrite(sheet, startRow, rowCount) {
