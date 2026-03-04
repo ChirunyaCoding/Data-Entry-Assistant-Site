@@ -1023,6 +1023,10 @@ export function DataEntryForm() {
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [savedEntries, setSavedEntries] = useState<SavedEntry[]>([]);
   const [savedResidentEntries, setSavedResidentEntries] = useState<SavedResidentEntry[]>([]);
+  const [editingBasicEntryId, setEditingBasicEntryId] = useState<number | null>(null);
+  const [editingResidentEntryId, setEditingResidentEntryId] = useState<number | null>(
+    null
+  );
   const [residentSecondaryEntries, setResidentSecondaryEntries] = useState<
     ResidentSecondaryEntry[]
   >([]);
@@ -2079,10 +2083,33 @@ export function DataEntryForm() {
     };
   };
 
-  const handleBasicSaveToList = () => {
-    const basicEntry = createBasicEntryFromForm();
+  const upsertBasicEntryToList = (
+    basicEntry: ReturnType<typeof createBasicEntryFromForm>,
+    options?: {
+      clearAfterSave?: boolean;
+    }
+  ) => {
     const savedAt = new Date().toISOString();
+    const editingId = editingBasicEntryId;
     setSavedEntries((prev) => {
+      if (editingId !== null) {
+        let updated = false;
+        const next = prev.map((entry) => {
+          if (entry.id !== editingId) {
+            return entry;
+          }
+          updated = true;
+          return {
+            ...basicEntry,
+            id: entry.id,
+            savedAt,
+          };
+        });
+        if (updated) {
+          return next;
+        }
+      }
+
       const nextId =
         prev.length === 0
           ? 1
@@ -2094,10 +2121,26 @@ export function DataEntryForm() {
       };
       return [...prev, newEntry];
     });
+    setEditingBasicEntryId(null);
 
-    setBasicSheetSyncError("");
-    setBasicSheetSyncSuccess("");
-    handleClear();
+    if (options?.clearAfterSave ?? true) {
+      handleClear();
+    }
+  };
+
+  const handleBasicSaveToList = (options?: {
+    clearAfterSave?: boolean;
+    preserveSheetMessages?: boolean;
+  }) => {
+    const basicEntry = createBasicEntryFromForm();
+    upsertBasicEntryToList(basicEntry, {
+      clearAfterSave: options?.clearAfterSave,
+    });
+
+    if (!options?.preserveSheetMessages) {
+      setBasicSheetSyncError("");
+      setBasicSheetSyncSuccess("");
+    }
   };
 
   const handleBasicWriteToSheet = async () => {
@@ -2173,6 +2216,9 @@ export function DataEntryForm() {
           ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
           : `シート「${normalizedTargetSheetName}」へ反映しました。`;
       setBasicSheetSyncSuccess(successMessage);
+      upsertBasicEntryToList(basicEntry, {
+        clearAfterSave: false,
+      });
     } catch (error) {
       const message =
         error instanceof Error
@@ -2306,18 +2352,33 @@ export function DataEntryForm() {
     };
   };
 
-  const handleResidentSaveToList = () => {
-    if (residentSheetSelection === "residentSecondary") {
-      setResidentSheetSyncError(
-        "住民票シート2ではリスト保存は使用しません。書き込みを実行してください。"
-      );
-      setResidentSheetSyncSuccess("");
-      return;
+  const upsertResidentEntryToList = (
+    residentEntry: ReturnType<typeof createResidentEntryFromForm>,
+    options?: {
+      clearAfterSave?: boolean;
     }
-
+  ) => {
     const savedAt = new Date().toISOString();
-    const residentEntry = createResidentEntryFromForm();
+    const editingId = editingResidentEntryId;
     setSavedResidentEntries((prev) => {
+      if (editingId !== null) {
+        let updated = false;
+        const next = prev.map((entry) => {
+          if (entry.id !== editingId) {
+            return entry;
+          }
+          updated = true;
+          return {
+            ...residentEntry,
+            id: entry.id,
+            savedAt,
+          };
+        });
+        if (updated) {
+          return next;
+        }
+      }
+
       const nextId =
         prev.length === 0
           ? 1
@@ -2329,10 +2390,34 @@ export function DataEntryForm() {
       };
       return [...prev, newEntry];
     });
+    setEditingResidentEntryId(null);
 
-    setResidentSheetSyncError("");
-    setResidentSheetSyncSuccess("");
-    handleClear();
+    if (options?.clearAfterSave ?? true) {
+      handleClear();
+    }
+  };
+
+  const handleResidentSaveToList = (options?: {
+    clearAfterSave?: boolean;
+    preserveSheetMessages?: boolean;
+  }) => {
+    if (residentSheetSelection === "residentSecondary") {
+      setResidentSheetSyncError(
+        "住民票シート2ではリスト保存は使用しません。書き込みを実行してください。"
+      );
+      setResidentSheetSyncSuccess("");
+      return;
+    }
+
+    const residentEntry = createResidentEntryFromForm();
+    upsertResidentEntryToList(residentEntry, {
+      clearAfterSave: options?.clearAfterSave,
+    });
+
+    if (!options?.preserveSheetMessages) {
+      setResidentSheetSyncError("");
+      setResidentSheetSyncSuccess("");
+    }
   };
 
   const resolveResidentSheetTargetForWrite = () => {
@@ -2556,6 +2641,9 @@ export function DataEntryForm() {
           ? `シート「${resolvedTarget.normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
           : `シート「${resolvedTarget.normalizedTargetSheetName}」へ反映しました。`;
       setResidentSheetSyncSuccess(successMessage);
+      upsertResidentEntryToList(residentEntry, {
+        clearAfterSave: false,
+      });
     } catch (error) {
       const message =
         error instanceof Error
@@ -2803,6 +2891,9 @@ export function DataEntryForm() {
   };
 
   const handleClear = () => {
+    setEditingBasicEntryId(null);
+    setEditingResidentEntryId(null);
+
     if (mode === "basic") {
       setFormData({
         operator: settings.isOperatorFixed ? settings.fixedOperatorName : "",
@@ -2858,10 +2949,12 @@ export function DataEntryForm() {
 
   const handleDeleteEntry = (id: number) => {
     setSavedEntries((prev) => prev.filter((entry) => entry.id !== id));
+    setEditingBasicEntryId((prev) => (prev === id ? null : prev));
   };
 
   const handleDeleteResidentEntry = (id: number) => {
     setSavedResidentEntries((prev) => prev.filter((entry) => entry.id !== id));
+    setEditingResidentEntryId((prev) => (prev === id ? null : prev));
   };
 
   const handleEditEntry = (entry: SavedEntry) => {
@@ -2884,6 +2977,7 @@ export function DataEntryForm() {
       notes: entry.notes,
     });
     setShowNotes(Boolean(entry.notes));
+    setEditingBasicEntryId(entry.id);
   };
 
   const handleEditResidentEntry = (entry: SavedResidentEntry) => {
@@ -2913,6 +3007,7 @@ export function DataEntryForm() {
     });
     setResidentSheetSyncError("");
     setResidentSheetSyncSuccess("");
+    setEditingResidentEntryId(entry.id);
   };
 
   const handleCopyBasicEntries = async () => {
@@ -3712,7 +3807,7 @@ export function DataEntryForm() {
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  リストへ保存
+                  {editingBasicEntryId === null ? "リストへ保存" : "編集を上書き保存"}
                 </button>
                 <button
                   onClick={handleBasicWriteToSheet}
@@ -4787,7 +4882,9 @@ export function DataEntryForm() {
                     className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Save className="w-4 h-4" />
-                    リストへ保存
+                    {editingResidentEntryId === null
+                      ? "リストへ保存"
+                      : "編集を上書き保存"}
                   </button>
                   <button
                     onClick={handleResidentWriteToSheet}
