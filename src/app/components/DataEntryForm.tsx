@@ -325,6 +325,7 @@ interface AppSettings {
   fixedOperatorName: string;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
+  isResidentSecondaryColumnBUppercase: boolean;
   basicSheetWebhookUrl: string;
   residentSheetWebhookUrl: string;
   basicSheetUrl: string;
@@ -337,6 +338,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   fixedOperatorName: "",
   isResidentSelfNameFixed: false,
   fixedResidentSelfName: "",
+  isResidentSecondaryColumnBUppercase: true,
   basicSheetWebhookUrl: ENV_BASIC_SHEET_WEBHOOK_URL,
   residentSheetWebhookUrl: ENV_RESIDENT_SHEET_WEBHOOK_URL,
   basicSheetUrl: ENV_BASIC_SHEET_URL,
@@ -932,6 +934,15 @@ const forceFullWidthText = (rawValue: string): string => {
   );
 };
 
+const buildResidentSecondaryColumnBValue = (
+  rawValue: string,
+  shouldUppercase: boolean
+): string => {
+  const normalized = rawValue.normalize("NFKC");
+  const transformed = shouldUppercase ? normalized.toUpperCase() : normalized;
+  return forceFullWidthText(transformed);
+};
+
 const buildResidentSecondaryEntriesFromFiles = (
   files: File[]
 ): ResidentSecondaryEntry[] => {
@@ -1502,6 +1513,10 @@ export function DataEntryForm() {
           typeof parsed.fixedResidentSelfName === "string"
             ? parsed.fixedResidentSelfName
             : "",
+        isResidentSecondaryColumnBUppercase:
+          typeof parsed.isResidentSecondaryColumnBUppercase === "boolean"
+            ? parsed.isResidentSecondaryColumnBUppercase
+            : DEFAULT_APP_SETTINGS.isResidentSecondaryColumnBUppercase,
         basicSheetWebhookUrl:
           typeof parsed.basicSheetWebhookUrl === "string"
             ? parsed.basicSheetWebhookUrl
@@ -2890,7 +2905,10 @@ export function DataEntryForm() {
   ): ResidentSecondarySheetWriteRow[] => {
     return entries
       .map((entry) => ({
-        B: forceFullWidthText(entry.fileName),
+        B: buildResidentSecondaryColumnBValue(
+          entry.fileName,
+          settings.isResidentSecondaryColumnBUppercase
+        ),
         C: entry.name.trim(),
       }))
       .filter((row) => row.C.length > 0);
@@ -6026,6 +6044,19 @@ export function DataEntryForm() {
                 placeholder="例: 田中 花子"
               />
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={settings.isResidentSecondaryColumnBUppercase}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isResidentSecondaryColumnBUppercase: e.target.checked,
+                  }))
+                }
+              />
+              住民票シート2のB列ファイル名を大文字化する
+            </label>
             <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-3">
               <div className="flex items-start justify-between gap-3">
                 <h3 className="text-xs font-semibold text-gray-700">シート/Webhook設定</h3>
