@@ -344,6 +344,61 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   residentSecondarySheetUrl: ENV_RESIDENT_SECONDARY_SHEET_URL,
 };
 
+type AppSettingsUrlField =
+  | "basicSheetWebhookUrl"
+  | "residentSheetWebhookUrl"
+  | "basicSheetUrl"
+  | "residentPrimarySheetUrl"
+  | "residentSecondarySheetUrl";
+
+const ENV_URL_KEY_TO_SETTING_FIELD: Record<string, AppSettingsUrlField> = {
+  VITE_BASIC_SHEET_WEBHOOK_URL: "basicSheetWebhookUrl",
+  VITE_RESIDENT_SHEET_WEBHOOK_URL: "residentSheetWebhookUrl",
+  VITE_BASIC_SHEET_URL: "basicSheetUrl",
+  VITE_RESIDENT_PRIMARY_SHEET_URL: "residentPrimarySheetUrl",
+  VITE_RESIDENT_SECONDARY_SHEET_URL: "residentSecondarySheetUrl",
+};
+
+const parseDotEnvUrlSettings = (
+  envContent: string
+): Partial<Pick<AppSettings, AppSettingsUrlField>> => {
+  const parsedSettings: Partial<Pick<AppSettings, AppSettingsUrlField>> = {};
+  const lines = envContent.split(/\r?\n/);
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith("#")) {
+      continue;
+    }
+
+    const normalizedLine = trimmedLine.startsWith("export ")
+      ? trimmedLine.slice("export ".length).trim()
+      : trimmedLine;
+    const separatorIndex = normalizedLine.indexOf("=");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const rawKey = normalizedLine.slice(0, separatorIndex).trim().replace(/^\uFEFF/, "");
+    const settingField = ENV_URL_KEY_TO_SETTING_FIELD[rawKey];
+    if (!settingField) {
+      continue;
+    }
+
+    let rawValue = normalizedLine.slice(separatorIndex + 1).trim();
+    if (
+      (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+      (rawValue.startsWith("'") && rawValue.endsWith("'"))
+    ) {
+      rawValue = rawValue.slice(1, -1);
+    }
+
+    parsedSettings[settingField] = rawValue.trim();
+  }
+
+  return parsedSettings;
+};
+
 const formatPostalCode = (rawValue: string): string => {
   const digits = rawValue.replace(/[^\d]/g, "").slice(0, 7);
   if (digits.length <= 3) {
@@ -1067,6 +1122,11 @@ export function DataEntryForm() {
   const [settings, setSettings] = useState<AppSettings>({
     ...DEFAULT_APP_SETTINGS,
   });
+  const settingsEnvFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [settingsEnvImportMessage, setSettingsEnvImportMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
   const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
   const [formData, setFormData] = useState<FormData>({
     operator: "",
@@ -1471,6 +1531,45 @@ export function DataEntryForm() {
   useEffect(() => {
     window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  const handleImportSettingsFromEnvFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!selectedFile) {
+      return;
+    }
+
+    try {
+      const envContent = await selectedFile.text();
+      const parsedSettings = parseDotEnvUrlSettings(envContent);
+      const appliedKeys = Object.keys(parsedSettings);
+
+      if (appliedKeys.length === 0) {
+        setSettingsEnvImportMessage({
+          type: "error",
+          text: "対象キーが見つかりません。VITE_* の設定名を確認してください。",
+        });
+        return;
+      }
+
+      setSettings((prev) => ({
+        ...prev,
+        ...parsedSettings,
+      }));
+      setSettingsEnvImportMessage({
+        type: "success",
+        text: `.envファイルから ${appliedKeys.length} 件の設定を読み込みました。`,
+      });
+    } catch {
+      setSettingsEnvImportMessage({
+        type: "error",
+        text: ".envファイルの読み込みに失敗しました。",
+      });
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -5928,29 +6027,59 @@ export function DataEntryForm() {
               />
             </div>
             <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start justify-between gap-3">
                 <h3 className="text-xs font-semibold text-gray-700">シート/Webhook設定</h3>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
-                      residentSheetWebhookUrl: DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
-                      basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
-                      residentPrimarySheetUrl: DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
-                      residentSecondarySheetUrl:
-                        DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
-                    }))
-                  }
-                  className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
-                >
-                  .envの値を読み込む
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettings((prev) => ({
+                        ...prev,
+                        basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
+                        residentSheetWebhookUrl:
+                          DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+                        basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
+                        residentPrimarySheetUrl:
+                          DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
+                        residentSecondarySheetUrl:
+                          DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
+                      }));
+                      setSettingsEnvImportMessage(null);
+                    }}
+                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
+                  >
+                    .envの値を読み込む
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => settingsEnvFileInputRef.current?.click()}
+                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
+                  >
+                    .envファイルを読み込む
+                  </button>
+                </div>
               </div>
+              <input
+                ref={settingsEnvFileInputRef}
+                type="file"
+                accept=".env,text/plain"
+                className="hidden"
+                onChange={handleImportSettingsFromEnvFile}
+              />
               <p className="text-[11px] text-gray-500">
                 空欄にすると該当機能は実行できません。通常は .env の値を利用してください。
               </p>
+              {settingsEnvImportMessage && (
+                <p
+                  className={`text-[11px] ${
+                    settingsEnvImportMessage.type === "success"
+                      ? "text-green-700"
+                      : "text-red-600"
+                  }`}
+                >
+                  {settingsEnvImportMessage.text}
+                </p>
+              )}
               <div>
                 <label className="block text-[11px] text-gray-600 mb-1">
                   基本モード Webhook URL
