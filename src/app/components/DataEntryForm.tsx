@@ -2094,6 +2094,7 @@ export function DataEntryForm() {
     basicEntry: ReturnType<typeof createBasicEntryFromForm>,
     options?: {
       clearAfterSave?: boolean;
+      skipDuplicateOnInsert?: boolean;
     }
   ) => {
     const savedAt = new Date().toISOString();
@@ -2114,6 +2115,17 @@ export function DataEntryForm() {
         });
         if (updated) {
           return next;
+        }
+      }
+
+      if (options?.skipDuplicateOnInsert) {
+        const hasSameEntry = prev.some((entry) => {
+          return BASIC_FIELD_ORDER.every((fieldName) => {
+            return entry[fieldName].trim() === basicEntry[fieldName].trim();
+          });
+        });
+        if (hasSameEntry) {
+          return prev;
         }
       }
 
@@ -2259,6 +2271,7 @@ export function DataEntryForm() {
       if (options?.autoSaveToList ?? true) {
         upsertBasicEntryToList(basicEntry, {
           clearAfterSave: false,
+          skipDuplicateOnInsert: true,
         });
       }
     } catch (error) {
@@ -2442,6 +2455,7 @@ export function DataEntryForm() {
     residentEntry: ReturnType<typeof createResidentEntryFromForm>,
     options?: {
       clearAfterSave?: boolean;
+      skipDuplicateOnInsert?: boolean;
     }
   ) => {
     const savedAt = new Date().toISOString();
@@ -2462,6 +2476,17 @@ export function DataEntryForm() {
         });
         if (updated) {
           return next;
+        }
+      }
+
+      if (options?.skipDuplicateOnInsert) {
+        const hasSameEntry = prev.some((entry) => {
+          return RESIDENT_FIELD_ORDER.every((fieldName) => {
+            return entry[fieldName].trim() === residentEntry[fieldName].trim();
+          });
+        });
+        if (hasSameEntry) {
+          return prev;
         }
       }
 
@@ -2734,6 +2759,7 @@ export function DataEntryForm() {
       if (options?.autoSaveToList ?? true) {
         upsertResidentEntryToList(residentEntry, {
           clearAfterSave: false,
+          skipDuplicateOnInsert: true,
         });
       }
     } catch (error) {
