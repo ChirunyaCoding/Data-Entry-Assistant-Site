@@ -202,17 +202,17 @@ const APP_SETTINGS_STORAGE_KEY = "data-entry-tool.settings.v1";
 const SIMPLE_LOGIN_PASSED_STORAGE_KEY = "data-entry-tool.simple-login-passed.v1";
 const SIMPLE_LOGIN_NAME = "admin";
 const SIMPLE_LOGIN_PASS = "chihiro";
-const BASIC_SHEET_WEBHOOK_URL = (
+const ENV_BASIC_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_BASIC_SHEET_WEBHOOK_URL ?? ""
 ).trim();
-const RESIDENT_SHEET_WEBHOOK_URL = (
+const ENV_RESIDENT_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
 ).trim();
-const BASIC_SHEET_URL = (import.meta.env.VITE_BASIC_SHEET_URL ?? "").trim();
-const RESIDENT_PRIMARY_SHEET_URL = (
+const ENV_BASIC_SHEET_URL = (import.meta.env.VITE_BASIC_SHEET_URL ?? "").trim();
+const ENV_RESIDENT_PRIMARY_SHEET_URL = (
   import.meta.env.VITE_RESIDENT_PRIMARY_SHEET_URL ?? ""
 ).trim();
-const RESIDENT_SECONDARY_SHEET_URL = (
+const ENV_RESIDENT_SECONDARY_SHEET_URL = (
   import.meta.env.VITE_RESIDENT_SECONDARY_SHEET_URL ?? ""
 ).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
@@ -224,11 +224,6 @@ const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
-const FIXED_SHEET_URLS = {
-  basic: BASIC_SHEET_URL,
-  residentPrimary: RESIDENT_PRIMARY_SHEET_URL,
-  residentSecondary: RESIDENT_SECONDARY_SHEET_URL,
-} as const;
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
 
 const BASIC_FIELD_ORDER = [
@@ -330,7 +325,24 @@ interface AppSettings {
   fixedOperatorName: string;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
+  basicSheetWebhookUrl: string;
+  residentSheetWebhookUrl: string;
+  basicSheetUrl: string;
+  residentPrimarySheetUrl: string;
+  residentSecondarySheetUrl: string;
 }
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  isOperatorFixed: false,
+  fixedOperatorName: "",
+  isResidentSelfNameFixed: false,
+  fixedResidentSelfName: "",
+  basicSheetWebhookUrl: ENV_BASIC_SHEET_WEBHOOK_URL,
+  residentSheetWebhookUrl: ENV_RESIDENT_SHEET_WEBHOOK_URL,
+  basicSheetUrl: ENV_BASIC_SHEET_URL,
+  residentPrimarySheetUrl: ENV_RESIDENT_PRIMARY_SHEET_URL,
+  residentSecondarySheetUrl: ENV_RESIDENT_SECONDARY_SHEET_URL,
+};
 
 const formatPostalCode = (rawValue: string): string => {
   const digits = rawValue.replace(/[^\d]/g, "").slice(0, 7);
@@ -1053,10 +1065,7 @@ export function DataEntryForm() {
   const [showNotes, setShowNotes] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
-    isOperatorFixed: false,
-    fixedOperatorName: "",
-    isResidentSelfNameFixed: false,
-    fixedResidentSelfName: "",
+    ...DEFAULT_APP_SETTINGS,
   });
   const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
   const [formData, setFormData] = useState<FormData>({
@@ -1180,9 +1189,11 @@ export function DataEntryForm() {
         window.localStorage.getItem(LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY) ?? ""
       ).trim();
       if (legacySheetName) {
-        const residentPrimaryId = extractGoogleSheetId(FIXED_SHEET_URLS.residentPrimary);
+        const residentPrimaryId = extractGoogleSheetId(
+          DEFAULT_APP_SETTINGS.residentPrimarySheetUrl
+        );
         const residentSecondaryId = extractGoogleSheetId(
-          FIXED_SHEET_URLS.residentSecondary
+          DEFAULT_APP_SETTINGS.residentSecondarySheetUrl
         );
         if (residentPrimaryId && !normalizedSelections[residentPrimaryId]) {
           normalizedSelections[residentPrimaryId] = legacySheetName;
@@ -1197,20 +1208,23 @@ export function DataEntryForm() {
       return {};
     }
   });
+  const configuredSheetUrls = {
+    basic: settings.basicSheetUrl.trim(),
+    residentPrimary: settings.residentPrimarySheetUrl.trim(),
+    residentSecondary: settings.residentSecondarySheetUrl.trim(),
+  } as const;
   const basicSheetWebhookConfig: SheetWebhookConfig = {
     envName: "VITE_BASIC_SHEET_WEBHOOK_URL",
-    url: BASIC_SHEET_WEBHOOK_URL,
+    url: settings.basicSheetWebhookUrl.trim(),
   };
   const residentSheetWebhookConfig: SheetWebhookConfig = {
     envName: "VITE_RESIDENT_SHEET_WEBHOOK_URL",
-    url: RESIDENT_SHEET_WEBHOOK_URL,
+    url: settings.residentSheetWebhookUrl.trim(),
   };
   const activeSheetWebhookConfig =
     mode === "basic" ? basicSheetWebhookConfig : residentSheetWebhookConfig;
   const activeSheetUrl =
-    mode === "basic"
-      ? FIXED_SHEET_URLS.basic
-      : FIXED_SHEET_URLS[residentSheetSelection];
+    mode === "basic" ? configuredSheetUrls.basic : configuredSheetUrls[residentSheetSelection];
   const activeSheetId = extractGoogleSheetId(activeSheetUrl);
   const hasLoadedActiveSheetTabs = activeSheetId
     ? Object.prototype.hasOwnProperty.call(sheetTabsBySheetId, activeSheetId)
@@ -1428,6 +1442,26 @@ export function DataEntryForm() {
           typeof parsed.fixedResidentSelfName === "string"
             ? parsed.fixedResidentSelfName
             : "",
+        basicSheetWebhookUrl:
+          typeof parsed.basicSheetWebhookUrl === "string"
+            ? parsed.basicSheetWebhookUrl
+            : DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
+        residentSheetWebhookUrl:
+          typeof parsed.residentSheetWebhookUrl === "string"
+            ? parsed.residentSheetWebhookUrl
+            : DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+        basicSheetUrl:
+          typeof parsed.basicSheetUrl === "string"
+            ? parsed.basicSheetUrl
+            : DEFAULT_APP_SETTINGS.basicSheetUrl,
+        residentPrimarySheetUrl:
+          typeof parsed.residentPrimarySheetUrl === "string"
+            ? parsed.residentPrimarySheetUrl
+            : DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
+        residentSecondarySheetUrl:
+          typeof parsed.residentSecondarySheetUrl === "string"
+            ? parsed.residentSecondarySheetUrl
+            : DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
       });
     } catch {
       // 設定の復元に失敗した場合は既定値を使う
@@ -2266,7 +2300,7 @@ export function DataEntryForm() {
   };
 
   const resolveBasicSheetTargetForWrite = () => {
-    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.basic);
+    const targetSheetId = extractGoogleSheetId(configuredSheetUrls.basic);
     if (!targetSheetId) {
       setBasicSheetSyncError(
         "シートIDを取得できないため、シート反映をスキップしました。"
@@ -2519,7 +2553,7 @@ export function DataEntryForm() {
     setBasicSheetSyncError("");
     setBasicSheetSyncSuccess("");
 
-    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.basic);
+    const targetSheetId = extractGoogleSheetId(configuredSheetUrls.basic);
     if (!targetSheetId) {
       setBasicSheetSyncError(
         "シートIDを取得できないため、シート反映をスキップしました。"
@@ -2716,7 +2750,7 @@ export function DataEntryForm() {
 
   const resolveResidentSheetTargetForWrite = () => {
     const targetSheetId = extractGoogleSheetId(
-      FIXED_SHEET_URLS[residentSheetSelection]
+      configuredSheetUrls[residentSheetSelection]
     );
     if (!targetSheetId) {
       setResidentSheetSyncError("シートIDを取得できないため、シート反映をスキップしました。");
@@ -3124,7 +3158,7 @@ export function DataEntryForm() {
       return;
     }
 
-    const targetSheetId = extractGoogleSheetId(FIXED_SHEET_URLS.residentPrimary);
+    const targetSheetId = extractGoogleSheetId(configuredSheetUrls.residentPrimary);
     if (!targetSheetId) {
       setResidentSheetSyncError("シートIDを取得できないため、シート反映をスキップしました。");
       return;
@@ -5892,6 +5926,116 @@ export function DataEntryForm() {
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="例: 田中 花子"
               />
+            </div>
+            <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-semibold text-gray-700">シート/Webhook設定</h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
+                      residentSheetWebhookUrl: DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+                      basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
+                      residentPrimarySheetUrl: DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
+                      residentSecondarySheetUrl:
+                        DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
+                    }))
+                  }
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
+                >
+                  .envの値を読み込む
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500">
+                空欄にすると該当機能は実行できません。通常は .env の値を利用してください。
+              </p>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  基本モード Webhook URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.basicSheetWebhookUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      basicSheetWebhookUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_BASIC_SHEET_WEBHOOK_URL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  住民票モード Webhook URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.residentSheetWebhookUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      residentSheetWebhookUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_RESIDENT_SHEET_WEBHOOK_URL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  基本モード シートURL
+                </label>
+                <input
+                  type="text"
+                  value={settings.basicSheetUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      basicSheetUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_BASIC_SHEET_URL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  住民票シート1 URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.residentPrimarySheetUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      residentPrimarySheetUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_RESIDENT_PRIMARY_SHEET_URL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  住民票シート2 URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.residentSecondarySheetUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      residentSecondarySheetUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_RESIDENT_SECONDARY_SHEET_URL"
+                />
+              </div>
             </div>
             <p className="text-xs text-gray-500">
               電話番号は通常入力で携帯形式、Shiftキーを押して入力すると固定電話形式になります。
