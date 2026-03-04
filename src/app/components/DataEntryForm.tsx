@@ -10,6 +10,7 @@ import {
   FileUser,
   Copy,
   ChevronDown,
+  ChevronUp,
   Settings,
   X,
 } from "lucide-react";
@@ -83,6 +84,24 @@ const SUGGESTION_OVERSCAN = 6;
 
 const joinWithFullWidthSpace = (parts: string[]) => {
   return parts.filter(Boolean).join(FULL_WIDTH_SPACE);
+};
+
+const moveArrayItem = <T,>(items: T[], fromIndex: number, toIndex: number): T[] => {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
+
+  const next = [...items];
+  const movingItem = next[fromIndex];
+  next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, movingItem);
+  return next;
 };
 
 type SuggestionType = "postal" | "prefecture" | "city" | "town";
@@ -3139,10 +3158,34 @@ export function DataEntryForm() {
     setBasicListWritingEntryId((prev) => (prev === id ? null : prev));
   };
 
+  const handleMoveBasicEntry = (id: number, direction: "up" | "down") => {
+    setSavedEntries((prev) => {
+      const index = prev.findIndex((entry) => entry.id === id);
+      if (index < 0) {
+        return prev;
+      }
+
+      const toIndex = direction === "up" ? index - 1 : index + 1;
+      return moveArrayItem(prev, index, toIndex);
+    });
+  };
+
   const handleDeleteResidentEntry = (id: number) => {
     setSavedResidentEntries((prev) => prev.filter((entry) => entry.id !== id));
     setEditingResidentEntryId((prev) => (prev === id ? null : prev));
     setResidentListWritingEntryId((prev) => (prev === id ? null : prev));
+  };
+
+  const handleMoveResidentEntry = (id: number, direction: "up" | "down") => {
+    setSavedResidentEntries((prev) => {
+      const index = prev.findIndex((entry) => entry.id === id);
+      if (index < 0) {
+        return prev;
+      }
+
+      const toIndex = direction === "up" ? index - 1 : index + 1;
+      return moveArrayItem(prev, index, toIndex);
+    });
   };
 
   const handleEditEntry = (entry: SavedEntry) => {
@@ -4049,7 +4092,7 @@ export function DataEntryForm() {
                       保存されたデータはありません
                     </div>
                   ) : (
-                    savedEntries.map((entry) => (
+                    savedEntries.map((entry, index) => (
                       <div
                         key={entry.id}
                         className="p-4 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
@@ -4089,6 +4132,32 @@ export function DataEntryForm() {
                             )}
                           </div>
                           <div className="ml-3 flex items-center gap-1">
+                            <button
+                              onClick={() => handleMoveBasicEntry(entry.id, "up")}
+                              disabled={
+                                index === 0 ||
+                                isBasicSheetSaving ||
+                                isBasicFolderImporting ||
+                                isBasicListEntryWriting
+                              }
+                              className="p-2 text-gray-400 hover:text-gray-700 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
+                              title="上へ移動"
+                            >
+                              <ChevronUp className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveBasicEntry(entry.id, "down")}
+                              disabled={
+                                index === savedEntries.length - 1 ||
+                                isBasicSheetSaving ||
+                                isBasicFolderImporting ||
+                                isBasicListEntryWriting
+                              }
+                              className="p-2 text-gray-400 hover:text-gray-700 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
+                              title="下へ移動"
+                            >
+                              <ChevronDown className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => {
                                 void handleBasicListOverwriteWrite(entry);
@@ -5172,7 +5241,7 @@ export function DataEntryForm() {
                         保存されたデータはありません
                       </div>
                     ) : (
-                      savedResidentEntries.map((entry) => (
+                      savedResidentEntries.map((entry, index) => (
                         <div
                           key={entry.id}
                           className="p-4 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
@@ -5233,6 +5302,32 @@ export function DataEntryForm() {
                               </div>
                             </div>
                             <div className="ml-3 flex items-center gap-1">
+                              <button
+                                onClick={() => handleMoveResidentEntry(entry.id, "up")}
+                                disabled={
+                                  index === 0 ||
+                                  isResidentSheetSaving ||
+                                  isResidentFolderImporting ||
+                                  isResidentListEntryWriting
+                                }
+                                className="p-2 text-gray-400 hover:text-gray-700 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
+                                title="上へ移動"
+                              >
+                                <ChevronUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleMoveResidentEntry(entry.id, "down")}
+                                disabled={
+                                  index === savedResidentEntries.length - 1 ||
+                                  isResidentSheetSaving ||
+                                  isResidentFolderImporting ||
+                                  isResidentListEntryWriting
+                                }
+                                className="p-2 text-gray-400 hover:text-gray-700 transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
+                                title="下へ移動"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
                               <button
                                 onClick={() => {
                                   void handleResidentListOverwriteWrite(entry);
