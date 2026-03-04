@@ -118,6 +118,8 @@ function handleAppendBasicRow(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 5);
+  var targetRow = Number(payload.targetRow || 0);
+  var preferExistingRow = Boolean(payload.preferExistingRow);
   var values = payload.values || {};
 
   if (!sheetId) {
@@ -136,7 +138,13 @@ function handleAppendBasicRow(payload) {
     });
   }
 
-  var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 1, 10);
+  var nextRow = targetRow >= startRow ? Math.floor(targetRow) : -1;
+  if (nextRow < startRow && preferExistingRow) {
+    nextRow = findFirstMatchingBasicRow(sheet, startRow, values);
+  }
+  if (nextRow < startRow) {
+    nextRow = findFirstEmptyRowInColumns(sheet, startRow, 1, 10);
+  }
   ensureRowsForWrite(sheet, nextRow, 1);
 
   sheet.getRange(nextRow, 1).setValue(values.A || "");  // A
@@ -203,6 +211,8 @@ function handleAppendResidentRow(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 6);
+  var targetRow = Number(payload.targetRow || 0);
+  var preferExistingRow = Boolean(payload.preferExistingRow);
   var values = payload.values || {};
 
   if (!sheetId) {
@@ -221,7 +231,13 @@ function handleAppendResidentRow(payload) {
     });
   }
 
-  var nextRow = findFirstEmptyRowByColumns(sheet, startRow, [2, 6, 7, 8, 9, 10, 11, 12]);
+  var nextRow = targetRow >= startRow ? Math.floor(targetRow) : -1;
+  if (nextRow < startRow && preferExistingRow) {
+    nextRow = findFirstMatchingResidentRow(sheet, startRow, values);
+  }
+  if (nextRow < startRow) {
+    nextRow = findFirstEmptyRowByColumns(sheet, startRow, [2, 6, 7, 8, 9, 10, 11, 12]);
+  }
   ensureRowsForWrite(sheet, nextRow, 1);
 
   sheet.getRange(nextRow, 2).setValue(values.B || "");  // B
@@ -424,6 +440,83 @@ function findFirstRowByColumnValue(sheet, startRow, column, value) {
   var values = sheet.getRange(startRow, column, rowCount, 1).getDisplayValues();
   for (var i = 0; i < values.length; i++) {
     if (String(values[i][0] || "").trim() === targetValue) {
+      return startRow + i;
+    }
+  }
+
+  return -1;
+}
+
+function normalizeCompareValue(value) {
+  return String(value || "").trim();
+}
+
+function findFirstMatchingBasicRow(sheet, startRow, values) {
+  var maxRows = sheet.getMaxRows();
+  if (startRow > maxRows) {
+    return -1;
+  }
+
+  var expected = [
+    normalizeCompareValue(values.A),
+    normalizeCompareValue(values.B),
+    normalizeCompareValue(values.C),
+    normalizeCompareValue(values.D),
+    normalizeCompareValue(values.E),
+    normalizeCompareValue(values.F),
+    normalizeCompareValue(values.G),
+    normalizeCompareValue(values.H),
+    normalizeCompareValue(values.I),
+    normalizeCompareValue(values.J),
+  ];
+  var rowCount = maxRows - startRow + 1;
+  var rows = sheet.getRange(startRow, 1, rowCount, 10).getDisplayValues();
+  for (var i = 0; i < rows.length; i++) {
+    var rowValues = rows[i];
+    var isSame = true;
+    for (var col = 0; col < expected.length; col++) {
+      if (normalizeCompareValue(rowValues[col]) !== expected[col]) {
+        isSame = false;
+        break;
+      }
+    }
+    if (isSame) {
+      return startRow + i;
+    }
+  }
+
+  return -1;
+}
+
+function findFirstMatchingResidentRow(sheet, startRow, values) {
+  var maxRows = sheet.getMaxRows();
+  if (startRow > maxRows) {
+    return -1;
+  }
+
+  var expectedB = normalizeCompareValue(values.B);
+  var expectedF = normalizeCompareValue(values.F);
+  var expectedG = normalizeCompareValue(values.G);
+  var expectedH = normalizeCompareValue(values.H);
+  var expectedI = normalizeCompareValue(values.I);
+  var expectedJ = normalizeCompareValue(values.J);
+  var expectedK = normalizeCompareValue(values.K);
+  var expectedL = normalizeCompareValue(values.L);
+
+  var rowCount = maxRows - startRow + 1;
+  var rows = sheet.getRange(startRow, 2, rowCount, 11).getDisplayValues(); // B-L
+  for (var i = 0; i < rows.length; i++) {
+    var rowValues = rows[i];
+    var isSame =
+      normalizeCompareValue(rowValues[0]) === expectedB &&
+      normalizeCompareValue(rowValues[4]) === expectedF &&
+      normalizeCompareValue(rowValues[5]) === expectedG &&
+      normalizeCompareValue(rowValues[6]) === expectedH &&
+      normalizeCompareValue(rowValues[7]) === expectedI &&
+      normalizeCompareValue(rowValues[8]) === expectedJ &&
+      normalizeCompareValue(rowValues[9]) === expectedK &&
+      normalizeCompareValue(rowValues[10]) === expectedL;
+    if (isSame) {
       return startRow + i;
     }
   }

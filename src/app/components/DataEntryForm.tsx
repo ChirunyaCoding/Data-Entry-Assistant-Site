@@ -64,11 +64,19 @@ interface ResidentFormData {
 interface SavedEntry extends FormData {
   id: number;
   savedAt: string;
+  sheetRowsByTarget?: Record<string, number>;
 }
 
 interface SavedResidentEntry extends ResidentFormData {
   id: number;
   savedAt: string;
+  sheetRowsByTarget?: Record<string, number>;
+}
+
+interface SheetWritePosition {
+  sheetId: string;
+  sheetName: string;
+  row: number;
 }
 
 interface ResidentSecondaryEntry {
@@ -102,6 +110,51 @@ const moveArrayItem = <T,>(items: T[], fromIndex: number, toIndex: number): T[] 
   next.splice(fromIndex, 1);
   next.splice(toIndex, 0, movingItem);
   return next;
+};
+
+const buildSheetTargetKey = (sheetId: string, sheetName: string): string => {
+  return `${sheetId}::${sheetName}`;
+};
+
+const normalizeSheetRow = (row: unknown): number | null => {
+  if (typeof row !== "number" || !Number.isFinite(row)) {
+    return null;
+  }
+  const normalized = Math.floor(row);
+  return normalized >= 1 ? normalized : null;
+};
+
+const mergeSheetRowMap = (
+  currentMap: Record<string, number> | undefined,
+  position: SheetWritePosition | undefined
+): Record<string, number> | undefined => {
+  if (!position) {
+    return currentMap;
+  }
+  const normalizedRow = normalizeSheetRow(position.row);
+  if (normalizedRow === null) {
+    return currentMap;
+  }
+
+  const targetKey = buildSheetTargetKey(position.sheetId, position.sheetName);
+  if (currentMap?.[targetKey] === normalizedRow) {
+    return currentMap;
+  }
+
+  return {
+    ...(currentMap ?? {}),
+    [targetKey]: normalizedRow,
+  };
+};
+
+const resolveSheetRowFromMap = (
+  sheetRowsByTarget: Record<string, number> | undefined,
+  sheetId: string,
+  sheetName: string
+): number | undefined => {
+  const targetKey = buildSheetTargetKey(sheetId, sheetName);
+  const normalizedRow = normalizeSheetRow(sheetRowsByTarget?.[targetKey]);
+  return normalizedRow ?? undefined;
 };
 
 type SuggestionType = "postal" | "prefecture" | "city" | "town";
@@ -600,9 +653,12 @@ const normalizeSheetUrl = (rawUrl: string): string => {
 };
 
 interface ResidentSheetWritePayload {
+  action: "appendResidentRow";
   sheetId: string;
   sheetName: string;
   startRow: number;
+  targetRow?: number;
+  preferExistingRow?: boolean;
   values: {
     B: string;
     F: string;
@@ -647,6 +703,8 @@ interface BasicSheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  targetRow?: number;
+  preferExistingRow?: boolean;
   values: {
     A: string;
     B: string;
@@ -2114,6 +2172,7 @@ export function DataEntryForm() {
     options?: {
       clearAfterSave?: boolean;
       skipDuplicateOnInsert?: boolean;
+      writtenPosition?: SheetWritePosition;
     }
   ) => {
     const savedAt = new Date().toISOString();
@@ -2130,6 +2189,10 @@ export function DataEntryForm() {
             ...basicEntry,
             id: entry.id,
             savedAt,
+            sheetRowsByTarget: mergeSheetRowMap(
+              entry.sheetRowsByTarget,
+              options?.writtenPosition
+            ),
           };
         });
         if (updated) {
@@ -2138,13 +2201,29 @@ export function DataEntryForm() {
       }
 
       if (options?.skipDuplicateOnInsert) {
-        const hasSameEntry = prev.some((entry) => {
+        const duplicateIndex = prev.findIndex((entry) => {
           return BASIC_FIELD_ORDER.every((fieldName) => {
             return entry[fieldName].trim() === basicEntry[fieldName].trim();
           });
         });
-        if (hasSameEntry) {
-          return prev;
+        if (duplicateIndex >= 0) {
+          if (!options?.writtenPosition) {
+            return prev;
+          }
+          const duplicateEntry = prev[duplicateIndex];
+          const mergedSheetRows = mergeSheetRowMap(
+            duplicateEntry.sheetRowsByTarget,
+            options.writtenPosition
+          );
+          if (mergedSheetRows === duplicateEntry.sheetRowsByTarget) {
+            return prev;
+          }
+          const next = [...prev];
+          next[duplicateIndex] = {
+            ...duplicateEntry,
+            sheetRowsByTarget: mergedSheetRows,
+          };
+          return next;
         }
       }
 
@@ -2156,6 +2235,7 @@ export function DataEntryForm() {
         ...basicEntry,
         id: nextId,
         savedAt,
+        sheetRowsByTarget: mergeSheetRowMap(undefined, options?.writtenPosition),
       };
       return [...prev, newEntry];
     });
@@ -2222,7 +2302,11 @@ export function DataEntryForm() {
   const buildBasicSheetWritePayload = (
     basicEntry: ReturnType<typeof createBasicEntryFromForm>,
     targetSheetId: string,
-    normalizedTargetSheetName: string
+    normalizedTargetSheetName: string,
+    options?: {
+      targetRow?: number;
+      preferExistingRow?: boolean;
+    }
   ): BasicSheetWritePayload => {
     const integratedAddress = joinBasicAddressForSheet([
       basicEntry.prefecture,
@@ -2234,7 +2318,7 @@ export function DataEntryForm() {
       basicEntry.banchi,
     ]);
 
-    return {
+    const payload: BasicSheetWritePayload = {
       action: "appendBasicRow",
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
@@ -2252,6 +2336,16 @@ export function DataEntryForm() {
         J: basicEntry.notes,
       },
     };
+
+    const normalizedTargetRow = normalizeSheetRow(options?.targetRow);
+    if (normalizedTargetRow !== null) {
+      payload.targetRow = normalizedTargetRow;
+    }
+    if (options?.preferExistingRow) {
+      payload.preferExistingRow = true;
+    }
+
+    return payload;
   };
 
   const writeBasicEntryToSheet = async (
@@ -2261,12 +2355,18 @@ export function DataEntryForm() {
     options?: {
       singleEntryId?: number;
       autoSaveToList?: boolean;
+      targetRow?: number;
+      preferExistingRow?: boolean;
     }
   ) => {
     const payload = buildBasicSheetWritePayload(
       basicEntry,
       targetSheetId,
-      normalizedTargetSheetName
+      normalizedTargetSheetName,
+      {
+        targetRow: options?.targetRow,
+        preferExistingRow: options?.preferExistingRow,
+      }
     );
 
     if (typeof options?.singleEntryId === "number") {
@@ -2277,9 +2377,10 @@ export function DataEntryForm() {
 
     try {
       const result = await postBasicSheetPayload(payload, basicSheetWebhookConfig);
+      const normalizedWrittenRow = normalizeSheetRow(result.row);
       const successMessage =
-        typeof result.row === "number"
-          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+        normalizedWrittenRow !== null
+          ? `シート「${normalizedTargetSheetName}」の${normalizedWrittenRow}行目へ反映しました。`
           : `シート「${normalizedTargetSheetName}」へ反映しました。`;
       const withItemMessage =
         typeof options?.singleEntryId === "number"
@@ -2287,10 +2388,39 @@ export function DataEntryForm() {
           : successMessage;
       setBasicSheetSyncSuccess(withItemMessage);
 
+      const writtenPosition =
+        normalizedWrittenRow !== null
+          ? {
+              sheetId: targetSheetId,
+              sheetName: normalizedTargetSheetName,
+              row: normalizedWrittenRow,
+            }
+          : undefined;
+
+      if (
+        typeof options?.singleEntryId === "number" &&
+        writtenPosition
+      ) {
+        setSavedEntries((prev) =>
+          prev.map((savedEntry) =>
+            savedEntry.id === options.singleEntryId
+              ? {
+                  ...savedEntry,
+                  sheetRowsByTarget: mergeSheetRowMap(
+                    savedEntry.sheetRowsByTarget,
+                    writtenPosition
+                  ),
+                }
+              : savedEntry
+          )
+        );
+      }
+
       if (options?.autoSaveToList ?? true) {
         upsertBasicEntryToList(basicEntry, {
           clearAfterSave: false,
           skipDuplicateOnInsert: true,
+          writtenPosition,
         });
       }
     } catch (error) {
@@ -2317,6 +2447,12 @@ export function DataEntryForm() {
       return;
     }
 
+    const targetRow = resolveSheetRowFromMap(
+      entry.sheetRowsByTarget,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName
+    );
+
     await writeBasicEntryToSheet(
       entry,
       resolvedTarget.targetSheetId,
@@ -2324,6 +2460,8 @@ export function DataEntryForm() {
       {
         singleEntryId: entry.id,
         autoSaveToList: false,
+        targetRow,
+        preferExistingRow: true,
       }
     );
   };
@@ -2475,6 +2613,7 @@ export function DataEntryForm() {
     options?: {
       clearAfterSave?: boolean;
       skipDuplicateOnInsert?: boolean;
+      writtenPosition?: SheetWritePosition;
     }
   ) => {
     const savedAt = new Date().toISOString();
@@ -2491,6 +2630,10 @@ export function DataEntryForm() {
             ...residentEntry,
             id: entry.id,
             savedAt,
+            sheetRowsByTarget: mergeSheetRowMap(
+              entry.sheetRowsByTarget,
+              options?.writtenPosition
+            ),
           };
         });
         if (updated) {
@@ -2499,13 +2642,29 @@ export function DataEntryForm() {
       }
 
       if (options?.skipDuplicateOnInsert) {
-        const hasSameEntry = prev.some((entry) => {
+        const duplicateIndex = prev.findIndex((entry) => {
           return RESIDENT_FIELD_ORDER.every((fieldName) => {
             return entry[fieldName].trim() === residentEntry[fieldName].trim();
           });
         });
-        if (hasSameEntry) {
-          return prev;
+        if (duplicateIndex >= 0) {
+          if (!options?.writtenPosition) {
+            return prev;
+          }
+          const duplicateEntry = prev[duplicateIndex];
+          const mergedSheetRows = mergeSheetRowMap(
+            duplicateEntry.sheetRowsByTarget,
+            options.writtenPosition
+          );
+          if (mergedSheetRows === duplicateEntry.sheetRowsByTarget) {
+            return prev;
+          }
+          const next = [...prev];
+          next[duplicateIndex] = {
+            ...duplicateEntry,
+            sheetRowsByTarget: mergedSheetRows,
+          };
+          return next;
         }
       }
 
@@ -2517,6 +2676,7 @@ export function DataEntryForm() {
         ...residentEntry,
         id: nextId,
         savedAt,
+        sheetRowsByTarget: mergeSheetRowMap(undefined, options?.writtenPosition),
       };
       return [...prev, newEntry];
     });
@@ -2701,7 +2861,11 @@ export function DataEntryForm() {
   const buildResidentPrimarySheetWritePayload = (
     residentEntry: ReturnType<typeof createResidentEntryFromForm>,
     targetSheetId: string,
-    normalizedTargetSheetName: string
+    normalizedTargetSheetName: string,
+    options?: {
+      targetRow?: number;
+      preferExistingRow?: boolean;
+    }
   ): ResidentSheetWritePayload => {
     const departAddress = joinResidentAddressForSheet([
       residentEntry.departPrefecture,
@@ -2722,7 +2886,8 @@ export function DataEntryForm() {
       residentEntry.registryBanchi,
     ]);
 
-    return {
+    const payload: ResidentSheetWritePayload = {
+      action: "appendResidentRow",
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
@@ -2737,6 +2902,16 @@ export function DataEntryForm() {
         L: residentEntry.residentAlias,
       },
     };
+
+    const normalizedTargetRow = normalizeSheetRow(options?.targetRow);
+    if (normalizedTargetRow !== null) {
+      payload.targetRow = normalizedTargetRow;
+    }
+    if (options?.preferExistingRow) {
+      payload.preferExistingRow = true;
+    }
+
+    return payload;
   };
 
   const writeResidentPrimaryEntryToSheet = async (
@@ -2746,12 +2921,18 @@ export function DataEntryForm() {
     options?: {
       singleEntryId?: number;
       autoSaveToList?: boolean;
+      targetRow?: number;
+      preferExistingRow?: boolean;
     }
   ) => {
     const payload = buildResidentPrimarySheetWritePayload(
       residentEntry,
       targetSheetId,
-      normalizedTargetSheetName
+      normalizedTargetSheetName,
+      {
+        targetRow: options?.targetRow,
+        preferExistingRow: options?.preferExistingRow,
+      }
     );
 
     if (typeof options?.singleEntryId === "number") {
@@ -2765,9 +2946,10 @@ export function DataEntryForm() {
         payload,
         residentSheetWebhookConfig
       );
+      const normalizedWrittenRow = normalizeSheetRow(result.row);
       const successMessage =
-        typeof result.row === "number"
-          ? `シート「${normalizedTargetSheetName}」の${result.row}行目へ反映しました。`
+        normalizedWrittenRow !== null
+          ? `シート「${normalizedTargetSheetName}」の${normalizedWrittenRow}行目へ反映しました。`
           : `シート「${normalizedTargetSheetName}」へ反映しました。`;
       const withItemMessage =
         typeof options?.singleEntryId === "number"
@@ -2775,10 +2957,36 @@ export function DataEntryForm() {
           : successMessage;
       setResidentSheetSyncSuccess(withItemMessage);
 
+      const writtenPosition =
+        normalizedWrittenRow !== null
+          ? {
+              sheetId: targetSheetId,
+              sheetName: normalizedTargetSheetName,
+              row: normalizedWrittenRow,
+            }
+          : undefined;
+
+      if (typeof options?.singleEntryId === "number" && writtenPosition) {
+        setSavedResidentEntries((prev) =>
+          prev.map((savedEntry) =>
+            savedEntry.id === options.singleEntryId
+              ? {
+                  ...savedEntry,
+                  sheetRowsByTarget: mergeSheetRowMap(
+                    savedEntry.sheetRowsByTarget,
+                    writtenPosition
+                  ),
+                }
+              : savedEntry
+          )
+        );
+      }
+
       if (options?.autoSaveToList ?? true) {
         upsertResidentEntryToList(residentEntry, {
           clearAfterSave: false,
           skipDuplicateOnInsert: true,
+          writtenPosition,
         });
       }
     } catch (error) {
@@ -2810,6 +3018,12 @@ export function DataEntryForm() {
       return;
     }
 
+    const targetRow = resolveSheetRowFromMap(
+      entry.sheetRowsByTarget,
+      resolvedTarget.targetSheetId,
+      resolvedTarget.normalizedTargetSheetName
+    );
+
     await writeResidentPrimaryEntryToSheet(
       entry,
       resolvedTarget.targetSheetId,
@@ -2817,6 +3031,8 @@ export function DataEntryForm() {
       {
         singleEntryId: entry.id,
         autoSaveToList: false,
+        targetRow,
+        preferExistingRow: true,
       }
     );
   };
