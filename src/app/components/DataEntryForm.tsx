@@ -7132,7 +7132,7 @@ export function DataEntryForm() {
             role="dialog"
             aria-modal="true"
             aria-label="設定"
-            className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-xl space-y-4"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-lg border border-gray-200 bg-white p-5 shadow-xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -7298,166 +7298,170 @@ export function DataEntryForm() {
               />
               住民票シート2のB列ファイル名を大文字化する
             </label>
-            <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-xs font-semibold text-gray-700">シート/Webhook設定</h3>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
+            <details className="rounded border border-gray-200 bg-gray-50 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-gray-700">
+                シート/Webhook設定（詳細）
+              </summary>
+              <div className="mt-2 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettings((prev) => ({
+                          ...prev,
+                          basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
+                          residentSheetWebhookUrl:
+                            DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+                          writeFontSize: DEFAULT_APP_SETTINGS.writeFontSize,
+                          basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
+                          basicSecondarySheetUrl:
+                            DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,
+                          residentPrimarySheetUrl:
+                            DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
+                          residentSecondarySheetUrl:
+                            DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
+                        }));
+                        setSettingsEnvImportMessage(null);
+                      }}
+                      className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
+                    >
+                      .envの値を読み込む
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => settingsEnvFileInputRef.current?.click()}
+                      className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
+                    >
+                      .envファイルを読み込む
+                    </button>
+                  </div>
+                </div>
+                <input
+                  ref={settingsEnvFileInputRef}
+                  type="file"
+                  accept=".env,text/plain"
+                  className="hidden"
+                  onChange={handleImportSettingsFromEnvFile}
+                />
+                <p className="text-[11px] text-gray-500">
+                  空欄にすると該当機能は実行できません。通常は .env の値を利用してください。
+                </p>
+                {settingsEnvImportMessage && (
+                  <p
+                    className={`text-[11px] ${
+                      settingsEnvImportMessage.type === "success"
+                        ? "text-green-700"
+                        : "text-red-600"
+                    }`}
+                  >
+                    {settingsEnvImportMessage.text}
+                  </p>
+                )}
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    基本モード Webhook URL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.basicSheetWebhookUrl}
+                    onChange={(e) =>
                       setSettings((prev) => ({
                         ...prev,
-                        basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
-                        residentSheetWebhookUrl:
-                          DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
-                        writeFontSize: DEFAULT_APP_SETTINGS.writeFontSize,
-                        basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
-                        basicSecondarySheetUrl:
-                          DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,
-                        residentPrimarySheetUrl:
-                          DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
-                        residentSecondarySheetUrl:
-                          DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
-                      }));
-                      setSettingsEnvImportMessage(null);
-                    }}
-                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
-                  >
-                    .envの値を読み込む
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => settingsEnvFileInputRef.current?.click()}
-                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100"
-                  >
-                    .envファイルを読み込む
-                  </button>
+                        basicSheetWebhookUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_BASIC_SHEET_WEBHOOK_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    住民票モード Webhook URL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.residentSheetWebhookUrl}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        residentSheetWebhookUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_RESIDENT_SHEET_WEBHOOK_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    基本モード シートURL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.basicSheetUrl}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        basicSheetUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_BASIC_SHEET_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    基本シート2 URL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.basicSecondarySheetUrl}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        basicSecondarySheetUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_BASIC_SECONDARY_SHEET_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    住民票シート1 URL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.residentPrimarySheetUrl}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        residentPrimarySheetUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_RESIDENT_PRIMARY_SHEET_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    住民票シート2 URL
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.residentSecondarySheetUrl}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        residentSecondarySheetUrl: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_RESIDENT_SECONDARY_SHEET_URL"
+                  />
                 </div>
               </div>
-              <input
-                ref={settingsEnvFileInputRef}
-                type="file"
-                accept=".env,text/plain"
-                className="hidden"
-                onChange={handleImportSettingsFromEnvFile}
-              />
-              <p className="text-[11px] text-gray-500">
-                空欄にすると該当機能は実行できません。通常は .env の値を利用してください。
-              </p>
-              {settingsEnvImportMessage && (
-                <p
-                  className={`text-[11px] ${
-                    settingsEnvImportMessage.type === "success"
-                      ? "text-green-700"
-                      : "text-red-600"
-                  }`}
-                >
-                  {settingsEnvImportMessage.text}
-                </p>
-              )}
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  基本モード Webhook URL
-                </label>
-                <input
-                  type="text"
-                  value={settings.basicSheetWebhookUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      basicSheetWebhookUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_BASIC_SHEET_WEBHOOK_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  住民票モード Webhook URL
-                </label>
-                <input
-                  type="text"
-                  value={settings.residentSheetWebhookUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      residentSheetWebhookUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_RESIDENT_SHEET_WEBHOOK_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  基本モード シートURL
-                </label>
-                <input
-                  type="text"
-                  value={settings.basicSheetUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      basicSheetUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_BASIC_SHEET_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  基本シート2 URL
-                </label>
-                <input
-                  type="text"
-                  value={settings.basicSecondarySheetUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      basicSecondarySheetUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_BASIC_SECONDARY_SHEET_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  住民票シート1 URL
-                </label>
-                <input
-                  type="text"
-                  value={settings.residentPrimarySheetUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      residentPrimarySheetUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_RESIDENT_PRIMARY_SHEET_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  住民票シート2 URL
-                </label>
-                <input
-                  type="text"
-                  value={settings.residentSecondarySheetUrl}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      residentSecondarySheetUrl: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_RESIDENT_SECONDARY_SHEET_URL"
-                />
-              </div>
-            </div>
+            </details>
             <p className="text-xs text-gray-500">
               電話番号は通常入力で携帯形式、Shiftキーを押して入力すると固定電話形式になります。
             </p>
