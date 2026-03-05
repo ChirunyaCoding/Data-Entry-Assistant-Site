@@ -536,7 +536,19 @@ const toFullWidthAlphabet = (rawValue: string): string => {
   );
 };
 
-const formatBanchiValue = (rawValue: string): string => {
+const toHalfWidthAlphabet = (rawValue: string): string => {
+  return rawValue.replace(/[Ａ-Ｚａ-ｚ]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) - 0xfee0)
+  );
+};
+
+const formatBanchiValue = (
+  rawValue: string,
+  options?: {
+    halfWidthAlphaNumeric?: boolean;
+    halfWidthHyphen?: boolean;
+  }
+): string => {
   const trimmed = rawValue.trim();
   if (!trimmed) {
     return "";
@@ -546,8 +558,15 @@ const formatBanchiValue = (rawValue: string): string => {
     return SHIFTED_NUMBER_TO_DIGIT_MAP[char] ?? char;
   });
   const normalized = shiftedNormalized.normalize("NFKC");
-  const fullWidthAlphaNumeric = toFullWidthAlphabet(toFullWidthDigits(normalized));
-  return fullWidthAlphaNumeric.replace(/[-‐‑‒–—―ｰ]/g, "－");
+
+  const normalizedAlphaNumeric = options?.halfWidthAlphaNumeric
+    ? toHalfWidthAlphabet(toHalfWidthDigits(normalized))
+    : toFullWidthAlphabet(toFullWidthDigits(normalized));
+
+  return normalizedAlphaNumeric.replace(
+    /[-‐‑‒–—―ｰ]/g,
+    options?.halfWidthHyphen ? "-" : "－"
+  );
 };
 
 const AREA_FIELD_PREFIXES = {
@@ -2020,7 +2039,10 @@ export function DataEntryForm() {
     if (name === "banchi") {
       setFormData((prev) => ({
         ...prev,
-        banchi: formatBanchiValue(value),
+        banchi: formatBanchiValue(value, {
+          halfWidthAlphaNumeric: true,
+          halfWidthHyphen: true,
+        }),
       }));
       return;
     }
