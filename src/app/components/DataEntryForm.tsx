@@ -522,12 +522,12 @@ const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
     return "";
   }
 
-  if (mode === "mobile") {
-    return splitByPattern(digits, [3, 4, 4]);
-  }
-
   if (digits.startsWith("0289")) {
     return splitByPattern(digits.slice(0, 10), [4, 2, 4]);
+  }
+
+  if (mode === "mobile") {
+    return splitByPattern(digits, [3, 4, 4]);
   }
 
   if (digits.startsWith("03") || digits.startsWith("06")) {
