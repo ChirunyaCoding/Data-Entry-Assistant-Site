@@ -15,8 +15,9 @@ import {
   X,
 } from "lucide-react";
 import { loadKenAllData, searchKenAllAddresses, type KenAllAddress } from "../lib/kenAll";
+import { findCitySuggestions, findTownSuggestions } from "../lib/addressSuggestions";
 import {
-  checkAddressWithLocalLlm,
+  checkAddressWithLocalInference,
   type LocalAddressCandidate,
   type LocalAddressCheckResult,
 } from "../lib/localAddressAi";
@@ -219,10 +220,6 @@ const ENV_RESIDENT_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
 ).trim();
 const ENV_BASIC_SHEET_URL = (import.meta.env.VITE_BASIC_SHEET_URL ?? "").trim();
-const ENV_LOCAL_LLM_ENDPOINT = (
-  import.meta.env.VITE_LOCAL_LLM_ENDPOINT ?? "http://127.0.0.1:11434/api/chat"
-).trim();
-const ENV_LOCAL_LLM_MODEL = (import.meta.env.VITE_LOCAL_LLM_MODEL ?? "qwen2.5:7b").trim();
 const ENV_BASIC_SECONDARY_SHEET_URL = (
   import.meta.env.VITE_BASIC_SECONDARY_SHEET_URL ?? ""
 ).trim();
@@ -359,8 +356,6 @@ interface AppSettings {
   isResidentSecondaryColumnBUppercase: boolean;
   basicSheetWebhookUrl: string;
   residentSheetWebhookUrl: string;
-  localLlmEndpoint: string;
-  localLlmModel: string;
   basicSheetUrl: string;
   basicSecondarySheetUrl: string;
   residentPrimarySheetUrl: string;
@@ -376,8 +371,6 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   isResidentSecondaryColumnBUppercase: true,
   basicSheetWebhookUrl: ENV_BASIC_SHEET_WEBHOOK_URL,
   residentSheetWebhookUrl: ENV_RESIDENT_SHEET_WEBHOOK_URL,
-  localLlmEndpoint: ENV_LOCAL_LLM_ENDPOINT,
-  localLlmModel: ENV_LOCAL_LLM_MODEL,
   basicSheetUrl: ENV_BASIC_SHEET_URL,
   basicSecondarySheetUrl: ENV_BASIC_SECONDARY_SHEET_URL,
   residentPrimarySheetUrl: ENV_RESIDENT_PRIMARY_SHEET_URL,
@@ -387,8 +380,6 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 type AppSettingsUrlField =
   | "basicSheetWebhookUrl"
   | "residentSheetWebhookUrl"
-  | "localLlmEndpoint"
-  | "localLlmModel"
   | "basicSheetUrl"
   | "basicSecondarySheetUrl"
   | "residentPrimarySheetUrl"
@@ -397,8 +388,6 @@ type AppSettingsUrlField =
 const ENV_URL_KEY_TO_SETTING_FIELD: Record<string, AppSettingsUrlField> = {
   VITE_BASIC_SHEET_WEBHOOK_URL: "basicSheetWebhookUrl",
   VITE_RESIDENT_SHEET_WEBHOOK_URL: "residentSheetWebhookUrl",
-  VITE_LOCAL_LLM_ENDPOINT: "localLlmEndpoint",
-  VITE_LOCAL_LLM_MODEL: "localLlmModel",
   VITE_BASIC_SHEET_URL: "basicSheetUrl",
   VITE_BASIC_SECONDARY_SHEET_URL: "basicSecondarySheetUrl",
   VITE_RESIDENT_PRIMARY_SHEET_URL: "residentPrimarySheetUrl",
@@ -1645,14 +1634,6 @@ export function DataEntryForm() {
           typeof parsed.residentSheetWebhookUrl === "string"
             ? parsed.residentSheetWebhookUrl
             : DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
-        localLlmEndpoint:
-          typeof parsed.localLlmEndpoint === "string"
-            ? parsed.localLlmEndpoint
-            : DEFAULT_APP_SETTINGS.localLlmEndpoint,
-        localLlmModel:
-          typeof parsed.localLlmModel === "string"
-            ? parsed.localLlmModel
-            : DEFAULT_APP_SETTINGS.localLlmModel,
         basicSheetUrl:
           typeof parsed.basicSheetUrl === "string"
             ? parsed.basicSheetUrl
@@ -2477,38 +2458,101 @@ export function DataEntryForm() {
   const collectBasicAddressAiReferenceCandidates = async (): Promise<
     LocalAddressCandidate[]
   > => {
+    const addresses = await loadKenAllData();
     const prefecture = formData.prefecture.trim();
     const city = formData.city.trim();
     const town = formData.town.trim();
+    const postalCodeDigits = formData.postalCode.replace(/[^\d]/g, "").slice(0, 7);
     const detailTown = joinBasicAddressForSheet([
       formData.town,
       formData.ooaza,
       formData.aza,
       formData.koaza,
     ]).trim();
-    const hasAddressInput = Boolean(prefecture || city || town || detailTown);
+    const hasAddressInput = Boolean(
+      prefecture || city || town || detailTown || postalCodeDigits.length === 7
+    );
     if (!hasAddressInput) {
       return [];
     }
 
-    const addresses = await loadKenAllData();
+    const merged: LocalAddressCandidate[] = [];
+    const seen = new Set<string>();
+    const pushAddressCandidate = (candidate: LocalAddressCandidate) => {
+      const key = `${candidate.postalCode}|${candidate.prefecture}|${candidate.city}|${candidate.town}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      merged.push(candidate);
+    };
+
+    if (postalCodeDigits.length === 7) {
+      const byPostal = addresses.filter((address) => address.postalCode === postalCodeDigits);
+      for (const address of byPostal) {
+        pushAddressCandidate({
+          postalCode: formatPostalCode(address.postalCode),
+          prefecture: address.prefecture,
+          city: address.city,
+          town: address.town,
+        });
+        if (merged.length >= 8) {
+          return merged;
+        }
+      }
+    }
+
+    const townSuggestions = findTownSuggestions(
+      addresses,
+      {
+        prefecture,
+        city,
+        town: detailTown || town,
+      },
+      8
+    );
+    for (const address of townSuggestions) {
+      pushAddressCandidate({
+        postalCode: formatPostalCode(address.postalCode),
+        prefecture: address.prefecture,
+        city: address.city,
+        town: address.town,
+      });
+      if (merged.length >= 8) {
+        return merged;
+      }
+    }
+
+    const citySuggestions = findCitySuggestions(
+      addresses,
+      {
+        prefecture,
+        city,
+        town: "",
+      },
+      8
+    );
+    for (const address of citySuggestions) {
+      pushAddressCandidate({
+        postalCode: formatPostalCode(address.postalCode),
+        prefecture: address.prefecture,
+        city: address.city,
+        town: town || "",
+      });
+      if (merged.length >= 8) {
+        return merged;
+      }
+    }
+
     const queries = [
       { prefecture, city, town: detailTown },
       { prefecture, city, town },
       { prefecture, city, town: "" },
     ];
-
-    const merged: LocalAddressCandidate[] = [];
-    const seen = new Set<string>();
     for (const query of queries) {
       const found = searchKenAllAddresses(addresses, query, 8);
       for (const address of found) {
-        const key = `${address.postalCode}|${address.prefecture}|${address.city}|${address.town}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        merged.push({
+        pushAddressCandidate({
           postalCode: formatPostalCode(address.postalCode),
           prefecture: address.prefecture,
           city: address.city,
@@ -2536,26 +2580,10 @@ export function DataEntryForm() {
       return;
     }
 
-    const endpoint = settings.localLlmEndpoint.trim();
-    if (!endpoint) {
-      setBasicAddressAiError(
-        "ローカルLLMエンドポイントが未設定です。設定から入力してください。"
-      );
-      return;
-    }
-
-    const model = settings.localLlmModel.trim();
-    if (!model) {
-      setBasicAddressAiError("ローカルLLMモデル名が未設定です。設定から入力してください。");
-      return;
-    }
-
     setIsBasicAddressAiChecking(true);
     try {
       const candidates = await collectBasicAddressAiReferenceCandidates();
-      const result = await checkAddressWithLocalLlm({
-        endpoint,
-        model,
+      const result = await checkAddressWithLocalInference({
         input: {
           postalCode: formData.postalCode.trim(),
           prefecture: formData.prefecture.trim(),
@@ -4492,7 +4520,7 @@ export function DataEntryForm() {
                         AI住所チェック（手入力住所）
                       </p>
                       <p className="text-[11px] text-blue-700">
-                        入力中の住所をローカルLLMで検証し、誤り候補があれば修正案を表示します。
+                        入力中の住所をブラウザ内推論で検証し、誤り候補があれば修正案を表示します。
                       </p>
                     </div>
                     <button
@@ -6475,8 +6503,6 @@ export function DataEntryForm() {
                         basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
                         residentSheetWebhookUrl:
                           DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
-                        localLlmEndpoint: DEFAULT_APP_SETTINGS.localLlmEndpoint,
-                        localLlmModel: DEFAULT_APP_SETTINGS.localLlmModel,
                         basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
                         basicSecondarySheetUrl:
                           DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,
@@ -6553,40 +6579,6 @@ export function DataEntryForm() {
                   }
                   className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="VITE_RESIDENT_SHEET_WEBHOOK_URL"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  ローカルLLM エンドポイント
-                </label>
-                <input
-                  type="text"
-                  value={settings.localLlmEndpoint}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      localLlmEndpoint: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_LOCAL_LLM_ENDPOINT"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-600 mb-1">
-                  ローカルLLM モデル名
-                </label>
-                <input
-                  type="text"
-                  value={settings.localLlmModel}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      localLlmModel: e.target.value,
-                    }))
-                  }
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="VITE_LOCAL_LLM_MODEL"
                 />
               </div>
               <div>

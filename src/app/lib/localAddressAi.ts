@@ -31,259 +31,182 @@ export interface LocalAddressCheckResult {
   corrected: LocalAddressCorrection | null;
 }
 
-interface OllamaChatResponse {
-  message?: {
-    content?: string;
-  };
-  response?: string;
+interface CandidateScoring {
+  candidate: LocalAddressCandidate;
+  confidence: number;
+  postalMatched: boolean;
+  prefectureMatched: boolean;
+  cityMatched: boolean;
+  townMatched: boolean;
 }
 
-const getBrowserOrigin = (): string => {
-  if (typeof window === "undefined") {
-    return "";
+const clamp = (value: number, min: number, max: number): number => {
+  if (!Number.isFinite(value)) {
+    return min;
   }
-  return window.location.origin;
+  return Math.min(max, Math.max(min, value));
 };
 
-const isMixedContentRequest = (endpoint: string): boolean => {
-  if (typeof window === "undefined") {
+const normalizeText = (value: string): string => {
+  return value.normalize("NFKC").replace(/[ 　]/g, "").trim();
+};
+
+const normalizePostalCode = (value: string): string => {
+  return value.replace(/[^\d]/g, "").slice(0, 7);
+};
+
+const isLooseMatch = (left: string, right: string): boolean => {
+  if (!left || !right) {
     return false;
   }
-  return window.location.protocol === "https:" && endpoint.startsWith("http://");
+  return left === right || left.includes(right) || right.includes(left);
 };
 
-const clampConfidence = (value: unknown): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  if (value < 0) {
-    return 0;
-  }
-  if (value > 1) {
-    return 1;
-  }
-  return value;
+const composeTownInput = (input: LocalAddressInput): string => {
+  return normalizeText(`${input.town}${input.ooaza}${input.aza}${input.koaza}`);
 };
 
-const pickString = (value: unknown): string => {
-  return typeof value === "string" ? value.trim() : "";
-};
-
-const extractJsonBlock = (rawText: string): string => {
-  const text = rawText.trim();
-  if (!text) {
-    throw new Error("ローカルLLMの応答が空です。");
-  }
-  if (text.startsWith("{") && text.endsWith("}")) {
-    return text;
-  }
-
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    throw new Error("ローカルLLMの応答からJSONを抽出できませんでした。");
-  }
-  return text.slice(start, end + 1);
-};
-
-const parseResult = (rawContent: string): LocalAddressCheckResult => {
-  const jsonBlock = extractJsonBlock(rawContent);
-  const parsed = JSON.parse(jsonBlock) as Record<string, unknown>;
-
-  const rawCorrection =
-    parsed.corrected && typeof parsed.corrected === "object"
-      ? (parsed.corrected as Record<string, unknown>)
-      : null;
-  const corrected =
-    rawCorrection &&
-    (pickString(rawCorrection.prefecture) ||
-      pickString(rawCorrection.city) ||
-      pickString(rawCorrection.town) ||
-      pickString(rawCorrection.postalCode))
-      ? {
-          postalCode: pickString(rawCorrection.postalCode),
-          prefecture: pickString(rawCorrection.prefecture),
-          city: pickString(rawCorrection.city),
-          town: pickString(rawCorrection.town),
-        }
-      : null;
-
+const toCorrection = (candidate: LocalAddressCandidate): LocalAddressCorrection => {
   return {
-    isValidAddress: Boolean(parsed.isValidAddress),
-    reason: pickString(parsed.reason) || "判定理由が返されませんでした。",
-    confidence: clampConfidence(parsed.confidence),
-    corrected,
+    postalCode: candidate.postalCode,
+    prefecture: candidate.prefecture,
+    city: candidate.city,
+    town: candidate.town,
   };
 };
 
-const buildPrompt = (
+const scoreCandidate = (
   input: LocalAddressInput,
-  candidates: LocalAddressCandidate[]
-): string => {
-  const manualAddress = [
-    input.prefecture,
-    input.city,
-    input.town,
-    input.ooaza,
-    input.aza,
-    input.koaza,
-    input.banchi,
-    input.building,
-  ]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("");
+  candidate: LocalAddressCandidate
+): CandidateScoring => {
+  const postalInput = normalizePostalCode(input.postalCode);
+  const prefectureInput = normalizeText(input.prefecture);
+  const cityInput = normalizeText(input.city);
+  const townInput = composeTownInput(input);
 
-  return [
-    "あなたは日本住所データ品質チェッカーです。",
-    "手入力住所を判定し、誤りの可能性がある場合は修正候補を返してください。",
-    "住所候補リストは参考情報です。候補に存在しない時は corrected を null にしてください。",
-    "必ずJSONのみで回答してください。説明文は禁止です。",
-    "",
-    "出力JSONスキーマ:",
-    "{",
-    '  "isValidAddress": boolean,',
-    '  "reason": string,',
-    '  "confidence": number,',
-    '  "corrected": {',
-    '    "postalCode": string,',
-    '    "prefecture": string,',
-    '    "city": string,',
-    '    "town": string',
-    "  } | null",
-    "}",
-    "",
-    "判定対象（手入力値）:",
-    JSON.stringify(
-      {
-        postalCode: input.postalCode,
-        manualAddress,
-        fields: {
-          prefecture: input.prefecture,
-          city: input.city,
-          town: input.town,
-          ooaza: input.ooaza,
-          aza: input.aza,
-          koaza: input.koaza,
-          banchi: input.banchi,
-          building: input.building,
-        },
-      },
-      null,
-      2
-    ),
-    "",
-    "参考候補（KEN_ALL由来・最大8件）:",
-    JSON.stringify(candidates, null, 2),
-  ].join("\n");
+  const postalCandidate = normalizePostalCode(candidate.postalCode);
+  const prefectureCandidate = normalizeText(candidate.prefecture);
+  const cityCandidate = normalizeText(candidate.city);
+  const townCandidate = normalizeText(candidate.town);
+
+  const weights = {
+    postal: 0.34,
+    prefecture: 0.22,
+    city: 0.22,
+    town: 0.22,
+  } as const;
+
+  let weightedScore = 0;
+  let maxWeight = 0;
+
+  const postalMatched = postalInput.length === 7 && postalInput === postalCandidate;
+  if (postalInput.length === 7) {
+    maxWeight += weights.postal;
+    weightedScore += postalMatched ? weights.postal : 0;
+  }
+
+  const prefectureMatched = isLooseMatch(prefectureInput, prefectureCandidate);
+  if (prefectureInput) {
+    maxWeight += weights.prefecture;
+    weightedScore += prefectureMatched
+      ? prefectureInput === prefectureCandidate
+        ? weights.prefecture
+        : weights.prefecture * 0.65
+      : 0;
+  }
+
+  const cityMatched = isLooseMatch(cityInput, cityCandidate);
+  if (cityInput) {
+    maxWeight += weights.city;
+    weightedScore += cityMatched
+      ? cityInput === cityCandidate
+        ? weights.city
+        : weights.city * 0.65
+      : 0;
+  }
+
+  const townMatched = isLooseMatch(townInput, townCandidate);
+  if (townInput) {
+    maxWeight += weights.town;
+    weightedScore += townMatched
+      ? townInput === townCandidate
+        ? weights.town
+        : weights.town * 0.7
+      : 0;
+  }
+
+  const confidence = maxWeight > 0 ? clamp(weightedScore / maxWeight, 0, 1) : 0;
+  return {
+    candidate,
+    confidence,
+    postalMatched,
+    prefectureMatched,
+    cityMatched,
+    townMatched,
+  };
 };
 
-export const checkAddressWithLocalLlm = async (params: {
-  endpoint: string;
-  model: string;
+const buildReason = (best: CandidateScoring, hasInputPostal: boolean): string => {
+  const misses: string[] = [];
+  if (hasInputPostal && !best.postalMatched) {
+    misses.push("郵便番号");
+  }
+  if (!best.prefectureMatched) {
+    misses.push("都道府県");
+  }
+  if (!best.cityMatched) {
+    misses.push("市区町村");
+  }
+  if (!best.townMatched) {
+    misses.push("町域");
+  }
+
+  if (misses.length === 0) {
+    return "手入力住所と住所候補の一致度が高く、実在の可能性が高いです。";
+  }
+
+  return `${misses.join("・")}に不一致の可能性があります。候補住所を確認してください。`;
+};
+
+export const checkAddressWithLocalInference = async (params: {
   input: LocalAddressInput;
   candidates: LocalAddressCandidate[];
-  timeoutMs?: number;
 }): Promise<LocalAddressCheckResult> => {
-  const endpoint = params.endpoint.trim();
-  const model = params.model.trim();
-  if (!endpoint) {
-    throw new Error("ローカルLLMエンドポイントが未設定です。");
-  }
-  if (!model) {
-    throw new Error("ローカルLLMモデル名が未設定です。");
-  }
-  if (isMixedContentRequest(endpoint)) {
-    throw new Error(
-      "このページはHTTPSで開かれているため、HTTPのローカルLLMへ接続できません。HTTP配信で開くか、HTTPS対応のローカルプロキシを利用してください。"
+  const candidates = params.candidates.filter((candidate) => {
+    return Boolean(
+      normalizeText(candidate.prefecture) ||
+        normalizeText(candidate.city) ||
+        normalizeText(candidate.town) ||
+        normalizePostalCode(candidate.postalCode)
     );
+  });
+
+  if (candidates.length === 0) {
+    return {
+      isValidAddress: false,
+      reason:
+        "住所候補が見つかりませんでした。入力住所の都道府県・市区町村・町域を確認してください。",
+      confidence: 0.12,
+      corrected: null,
+    };
   }
 
-  const controller = new AbortController();
-  const timeoutMs = params.timeoutMs ?? 30000;
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
+  const scored = candidates.map((candidate) => scoreCandidate(params.input, candidate));
+  scored.sort((a, b) => b.confidence - a.confidence);
+  const best = scored[0];
 
-  try {
-    const prompt = buildPrompt(params.input, params.candidates);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        format: "json",
-        options: {
-          temperature: 0.1,
-        },
-        messages: [
-          {
-            role: "system",
-            content:
-              "あなたは日本の住所正規化と誤記修正を行うアシスタントです。必ずJSONのみで回答してください。",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
+  const hasInputPostal = normalizePostalCode(params.input.postalCode).length === 7;
+  const hasCriticalMismatch =
+    (normalizeText(params.input.prefecture) && !best.prefectureMatched) ||
+    (normalizeText(params.input.city) && !best.cityMatched);
+  const isValidAddress = !hasCriticalMismatch && best.confidence >= 0.82;
+  const corrected =
+    !isValidAddress && best.confidence >= 0.45 ? toCorrection(best.candidate) : null;
 
-    if (!response.ok) {
-      const rawBody = await response.text().catch(() => "");
-      if (response.status === 403) {
-        const origin = getBrowserOrigin();
-        throw new Error(
-          [
-            "ローカルLLMがCORSで拒否しました (403)。",
-            origin
-              ? `Ollama起動時に OLLAMA_ORIGINS に ${origin} を追加してください。`
-              : "Ollama起動時に OLLAMA_ORIGINS に現在の画面オリジンを追加してください。",
-          ].join(" ")
-        );
-      }
-      if (rawBody.includes("model") && rawBody.includes("not found")) {
-        throw new Error(
-          `ローカルLLMモデル「${model}」が見つかりません。ollama ls で存在するモデル名を設定してください。`
-        );
-      }
-      throw new Error(
-        `ローカルLLM呼び出しに失敗しました (${response.status} ${response.statusText})`
-      );
-    }
-
-    const body = (await response.json()) as OllamaChatResponse;
-    const content =
-      (typeof body.message?.content === "string" ? body.message.content : "").trim() ||
-      (typeof body.response === "string" ? body.response : "").trim();
-    if (!content) {
-      throw new Error("ローカルLLMから本文応答を取得できませんでした。");
-    }
-
-    return parseResult(content);
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("ローカルLLMの応答がタイムアウトしました。");
-    }
-    if (error instanceof TypeError) {
-      const origin = getBrowserOrigin();
-      throw new Error(
-        [
-          `ローカルLLMへ接続できませんでした。endpoint: ${endpoint}`,
-          "Ollamaが起動中か確認してください（例: http://127.0.0.1:11434/api/tags）。",
-          origin
-            ? `CORS対策として OLLAMA_ORIGINS に ${origin} を追加してください。`
-            : "CORS対策として OLLAMA_ORIGINS に現在の画面オリジンを追加してください。",
-        ].join(" ")
-      );
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
+  return {
+    isValidAddress,
+    reason: buildReason(best, hasInputPostal),
+    confidence: best.confidence,
+    corrected,
+  };
 };
