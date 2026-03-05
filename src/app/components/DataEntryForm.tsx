@@ -3889,11 +3889,6 @@ export function DataEntryForm() {
         phone: "",
         notes: "",
       });
-      if (currentPdfObjectUrlRef.current) {
-        URL.revokeObjectURL(currentPdfObjectUrlRef.current);
-        currentPdfObjectUrlRef.current = null;
-      }
-      setPdfFile(null);
       setBasicAddressAiError("");
       setBasicAddressAiResult(null);
     } else {
