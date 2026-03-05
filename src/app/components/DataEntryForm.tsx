@@ -238,6 +238,9 @@ const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1"
 const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
+const DEFAULT_SHEET_WRITE_FONT_SIZE = 10;
+const MIN_SHEET_WRITE_FONT_SIZE = 6;
+const MAX_SHEET_WRITE_FONT_SIZE = 72;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 type BasicSheetSelection = "basicPrimary" | "basicSecondary";
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
@@ -350,6 +353,9 @@ type PhoneInputMode = "mobile" | "landline";
 interface AppSettings {
   isOperatorFixed: boolean;
   fixedOperatorName: string;
+  isFilenameFixed: boolean;
+  fixedFilename: string;
+  writeFontSize: number;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
   isBasicSecondarySheetEnabled: boolean;
@@ -365,6 +371,9 @@ interface AppSettings {
 const DEFAULT_APP_SETTINGS: AppSettings = {
   isOperatorFixed: false,
   fixedOperatorName: "",
+  isFilenameFixed: false,
+  fixedFilename: "",
+  writeFontSize: DEFAULT_SHEET_WRITE_FONT_SIZE,
   isResidentSelfNameFixed: false,
   fixedResidentSelfName: "",
   isBasicSecondarySheetEnabled: false,
@@ -432,6 +441,27 @@ const parseDotEnvUrlSettings = (
   }
 
   return parsedSettings;
+};
+
+const normalizeSheetWriteFontSize = (value: unknown): number => {
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numericValue)) {
+    return DEFAULT_SHEET_WRITE_FONT_SIZE;
+  }
+
+  const rounded = Math.floor(numericValue);
+  if (rounded < MIN_SHEET_WRITE_FONT_SIZE) {
+    return MIN_SHEET_WRITE_FONT_SIZE;
+  }
+  if (rounded > MAX_SHEET_WRITE_FONT_SIZE) {
+    return MAX_SHEET_WRITE_FONT_SIZE;
+  }
+  return rounded;
 };
 
 const formatPostalCode = (rawValue: string): string => {
@@ -783,6 +813,7 @@ interface ResidentSheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  fontSize?: number;
   targetRow?: number;
   preferExistingRow?: boolean;
   values: {
@@ -808,6 +839,7 @@ interface ResidentFolderSheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  fontSize?: number;
   rows: ResidentFolderSheetWriteRow[];
 }
 
@@ -821,6 +853,7 @@ interface ResidentSecondarySheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  fontSize?: number;
   rows: ResidentSecondarySheetWriteRow[];
 }
 
@@ -829,6 +862,7 @@ interface BasicSheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  fontSize?: number;
   targetRow?: number;
   preferExistingRow?: boolean;
   values: {
@@ -850,6 +884,7 @@ interface BasicFileNameSheetWritePayload {
   sheetId: string;
   sheetName: string;
   startRow: number;
+  fontSize?: number;
   fileNames: string[];
 }
 
@@ -931,6 +966,11 @@ const buildManualBasicAddressText = (formData: FormData): string => {
     .map((part) => part.trim())
     .filter(Boolean)
     .join("");
+};
+
+const isPdfFile = (file: File): boolean => {
+  const normalizedName = file.name.toLowerCase();
+  return file.type === "application/pdf" || normalizedName.endsWith(".pdf");
 };
 
 const TIFF_EXTENSION_PATTERN = /\.tiff?$/i;
@@ -1476,9 +1516,11 @@ export function DataEntryForm() {
   });
   const basicFormRef = useRef<HTMLDivElement>(null);
   const residentFormRef = useRef<HTMLDivElement>(null);
+  const pdfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const basicFolderInputRef = useRef<HTMLInputElement>(null);
   const residentFolderInputRef = useRef<HTMLInputElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
+  const currentPdfObjectUrlRef = useRef<string | null>(null);
   const requestSerialRef = useRef(0);
   const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
     postal: 0,
@@ -1527,6 +1569,14 @@ export function DataEntryForm() {
       input.setAttribute("directory", "");
     });
   }, [mode]);
+
+  useEffect(() => {
+    return () => {
+      if (currentPdfObjectUrlRef.current) {
+        URL.revokeObjectURL(currentPdfObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let isDisposed = false;
@@ -1613,6 +1663,10 @@ export function DataEntryForm() {
           typeof parsed.fixedOperatorName === "string"
             ? parsed.fixedOperatorName
             : "",
+        isFilenameFixed: Boolean(parsed.isFilenameFixed),
+        fixedFilename:
+          typeof parsed.fixedFilename === "string" ? parsed.fixedFilename : "",
+        writeFontSize: normalizeSheetWriteFontSize(parsed.writeFontSize),
         isResidentSelfNameFixed: Boolean(parsed.isResidentSelfNameFixed),
         fixedResidentSelfName:
           typeof parsed.fixedResidentSelfName === "string"
@@ -1831,6 +1885,17 @@ export function DataEntryForm() {
       operator: settings.fixedOperatorName,
     }));
   }, [settings.fixedOperatorName, settings.isOperatorFixed]);
+
+  useEffect(() => {
+    if (!settings.isFilenameFixed) {
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      filename: settings.fixedFilename,
+    }));
+  }, [settings.fixedFilename, settings.isFilenameFixed]);
 
   useEffect(() => {
     if (!settings.isResidentSelfNameFixed) {
@@ -2438,12 +2503,28 @@ export function DataEntryForm() {
     );
   };
 
+  const handleOpenPdfPicker = () => {
+    const input = pdfUploadInputRef.current;
+    if (!input) {
+      return;
+    }
+    input.value = "";
+    input.click();
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
-      const url = URL.createObjectURL(file);
-      setPdfFile(url);
+    e.target.value = "";
+    if (!file || !isPdfFile(file)) {
+      return;
     }
+
+    const url = URL.createObjectURL(file);
+    if (currentPdfObjectUrlRef.current) {
+      URL.revokeObjectURL(currentPdfObjectUrlRef.current);
+    }
+    currentPdfObjectUrlRef.current = url;
+    setPdfFile(url);
   };
 
   const createBasicEntryFromForm = () => {
@@ -2452,6 +2533,7 @@ export function DataEntryForm() {
       operator: settings.isOperatorFixed
         ? settings.fixedOperatorName
         : formData.operator,
+      filename: settings.isFilenameFixed ? settings.fixedFilename : formData.filename,
     };
   };
 
@@ -2537,7 +2619,7 @@ export function DataEntryForm() {
         postalCode: formatPostalCode(address.postalCode),
         prefecture: address.prefecture,
         city: address.city,
-        town: town || "",
+        town: address.town || "",
       });
       if (merged.length >= 8) {
         return merged;
@@ -2791,6 +2873,7 @@ export function DataEntryForm() {
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: BASIC_SHEET_START_ROW,
+      fontSize: settings.writeFontSize,
       values: {
         A: basicEntry.operator,
         B: basicEntry.filename,
@@ -3029,6 +3112,7 @@ export function DataEntryForm() {
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: BASIC_SHEET_START_ROW,
+      fontSize: settings.writeFontSize,
       fileNames,
     };
 
@@ -3251,6 +3335,7 @@ export function DataEntryForm() {
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SECONDARY_SHEET_START_ROW,
+      fontSize: settings.writeFontSize,
       rows,
     };
 
@@ -3364,6 +3449,7 @@ export function DataEntryForm() {
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
+      fontSize: settings.writeFontSize,
       values: {
         B: residentEntry.residentSelfName,
         F: residentEntry.departName,
@@ -3635,6 +3721,7 @@ export function DataEntryForm() {
       sheetId: targetSheetId,
       sheetName: normalizedTargetSheetName,
       startRow: RESIDENT_SHEET_START_ROW,
+      fontSize: settings.writeFontSize,
       rows,
     };
 
@@ -3791,7 +3878,7 @@ export function DataEntryForm() {
     if (mode === "basic") {
       setFormData({
         operator: settings.isOperatorFixed ? settings.fixedOperatorName : "",
-        filename: "",
+        filename: settings.isFilenameFixed ? settings.fixedFilename : "",
         postalCode: "",
         prefecture: "",
         city: "",
@@ -3807,6 +3894,10 @@ export function DataEntryForm() {
         phone: "",
         notes: "",
       });
+      if (currentPdfObjectUrlRef.current) {
+        URL.revokeObjectURL(currentPdfObjectUrlRef.current);
+        currentPdfObjectUrlRef.current = null;
+      }
       setPdfFile(null);
       setPhoneInputMode("mobile");
       setBasicAddressAiError("");
@@ -3882,7 +3973,7 @@ export function DataEntryForm() {
   const handleEditEntry = (entry: SavedEntry) => {
     setFormData({
       operator: settings.isOperatorFixed ? settings.fixedOperatorName : entry.operator,
-      filename: entry.filename,
+      filename: settings.isFilenameFixed ? settings.fixedFilename : entry.filename,
       postalCode: entry.postalCode,
       prefecture: entry.prefecture,
       city: entry.city,
@@ -4199,9 +4290,16 @@ export function DataEntryForm() {
                     <input
                       type="text"
                       name="filename"
-                      value={formData.filename}
+                      value={
+                        settings.isFilenameFixed
+                          ? settings.fixedFilename
+                          : formData.filename
+                      }
                       onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={settings.isFilenameFixed}
+                      className={`w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        settings.isFilenameFixed ? "bg-gray-100 text-gray-500" : ""
+                      }`}
                       placeholder="ファイル名を入力"
                     />
                   </div>
@@ -6322,28 +6420,45 @@ export function DataEntryForm() {
         <div className="flex-1 p-4 overflow-hidden">
           <div className={`h-full ${viewMode === "pdf" ? "block" : "hidden"}`}>
             {/* PDFプレビュー */}
+            <input
+              ref={pdfUploadInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
             {pdfFile ? (
-              <iframe
-                src={pdfFile}
-                className="w-full h-full border border-gray-300 rounded bg-white"
-                title="PDF Preview"
-              />
+              <div className="w-full h-full flex flex-col gap-2">
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleOpenPdfPicker}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm flex items-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    PDFを変更
+                  </button>
+                </div>
+                <iframe
+                  src={pdfFile}
+                  className="w-full flex-1 border border-gray-300 rounded bg-white"
+                  title="PDF Preview"
+                />
+              </div>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center bg-white border-2 border-dashed border-gray-300 rounded">
                 <div className="text-center mb-4">
                   <FileText className="w-16 h-16 text-gray-400 mx-auto mb-3" />
                   <p className="text-gray-500 mb-2">PDFファイルをアップロードしてください</p>
                 </div>
-                <label className="px-6 py-3 bg-blue-600 text-white rounded cursor-pointer hover:bg-blue-700 flex items-center gap-2 transition-colors">
+                <button
+                  type="button"
+                  onClick={handleOpenPdfPicker}
+                  className="px-6 py-3 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2 transition-colors"
+                >
                   <Upload className="w-5 h-5" />
                   PDFをアップロード
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
+                </button>
               </div>
             )}
           </div>
@@ -6438,6 +6553,59 @@ export function DataEntryForm() {
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
+                checked={settings.isFilenameFixed}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isFilenameFixed: e.target.checked,
+                  }))
+                }
+              />
+              ファイル名を固定する
+            </label>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                固定するファイル名
+              </label>
+              <input
+                type="text"
+                value={settings.fixedFilename}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    fixedFilename: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="例: 001_A案件"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                シート書き込みフォントサイズ
+              </label>
+              <input
+                type="number"
+                min={MIN_SHEET_WRITE_FONT_SIZE}
+                max={MAX_SHEET_WRITE_FONT_SIZE}
+                step={1}
+                value={settings.writeFontSize}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    writeFontSize: normalizeSheetWriteFontSize(e.target.value),
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder={`${DEFAULT_SHEET_WRITE_FONT_SIZE}`}
+              />
+              <p className="mt-1 text-[11px] text-gray-500">
+                {MIN_SHEET_WRITE_FONT_SIZE}〜{MAX_SHEET_WRITE_FONT_SIZE}
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
                 checked={settings.isResidentSelfNameFixed}
                 onChange={(e) =>
                   setSettings((prev) => ({
@@ -6503,6 +6671,7 @@ export function DataEntryForm() {
                         basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
                         residentSheetWebhookUrl:
                           DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+                        writeFontSize: DEFAULT_APP_SETTINGS.writeFontSize,
                         basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
                         basicSecondarySheetUrl:
                           DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,

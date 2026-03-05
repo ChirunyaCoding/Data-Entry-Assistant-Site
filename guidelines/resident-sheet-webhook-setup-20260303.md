@@ -118,6 +118,7 @@ function handleAppendBasicRow(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 5);
+  var fontSize = normalizeFontSize(payload.fontSize, 10);
   var targetRow = Number(payload.targetRow || 0);
   var preferExistingRow = Boolean(payload.preferExistingRow);
   var values = payload.values || {};
@@ -159,7 +160,7 @@ function handleAppendBasicRow(payload) {
   sheet.getRange(nextRow, 10).setValue(values.J || ""); // J
 
   // 書き込み時の表示書式を統一（メイリオ / 10）
-  sheet.getRange(nextRow, 1, 1, 10).setFontFamily("Meiryo").setFontSize(10);
+  sheet.getRange(nextRow, 1, 1, 10).setFontFamily("Meiryo").setFontSize(fontSize);
 
   return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
@@ -168,6 +169,7 @@ function handleAppendBasicFileNameRows(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 5);
+  var fontSize = normalizeFontSize(payload.fontSize, 10);
   var fileNames = Array.isArray(payload.fileNames) ? payload.fileNames : [];
 
   if (!sheetId) {
@@ -196,7 +198,7 @@ function handleAppendBasicFileNameRows(payload) {
   var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 2, 1);
   ensureRowsForWrite(sheet, nextRow, values.length);
   sheet.getRange(nextRow, 2, values.length, 1).setValues(values); // B列
-  sheet.getRange(nextRow, 2, values.length, 1).setFontFamily("Meiryo").setFontSize(10);
+  sheet.getRange(nextRow, 2, values.length, 1).setFontFamily("Meiryo").setFontSize(fontSize);
 
   return jsonResponse({
     ok: true,
@@ -211,6 +213,7 @@ function handleAppendResidentRow(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 6);
+  var fontSize = normalizeFontSize(payload.fontSize, 10);
   var targetRow = Number(payload.targetRow || 0);
   var preferExistingRow = Boolean(payload.preferExistingRow);
   var values = payload.values || {};
@@ -250,8 +253,8 @@ function handleAppendResidentRow(payload) {
   sheet.getRange(nextRow, 12).setValue(values.L || ""); // L
 
   // 書き込み時の表示書式を統一（メイリオ / 10）
-  sheet.getRange(nextRow, 2).setFontFamily("Meiryo").setFontSize(10);      // B
-  sheet.getRange(nextRow, 6, 1, 7).setFontFamily("Meiryo").setFontSize(10); // F-L
+  sheet.getRange(nextRow, 2).setFontFamily("Meiryo").setFontSize(fontSize);      // B
+  sheet.getRange(nextRow, 6, 1, 7).setFontFamily("Meiryo").setFontSize(fontSize); // F-L
 
   return jsonResponse({ ok: true, row: nextRow, sheetName: sheetName });
 }
@@ -260,6 +263,7 @@ function handleAppendResidentFolderRows(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 6);
+  var fontSize = normalizeFontSize(payload.fontSize, 10);
   var rows = Array.isArray(payload.rows) ? payload.rows : [];
 
   if (!sheetId) {
@@ -291,7 +295,7 @@ function handleAppendResidentFolderRows(payload) {
   var nextRow = findFirstEmptyRowInColumns(sheet, startRow, 3, 3);
   ensureRowsForWrite(sheet, nextRow, values.length);
   sheet.getRange(nextRow, 3, values.length, 3).setValues(values); // C:D:E
-  sheet.getRange(nextRow, 3, values.length, 3).setFontFamily("Meiryo").setFontSize(10);
+  sheet.getRange(nextRow, 3, values.length, 3).setFontFamily("Meiryo").setFontSize(fontSize);
 
   return jsonResponse({
     ok: true,
@@ -306,6 +310,7 @@ function handleAppendResidentSecondaryRows(payload) {
   var sheetId = String(payload.sheetId || "").trim();
   var sheetName = String(payload.sheetName || "").trim();
   var startRow = Number(payload.startRow || 3);
+  var fontSize = normalizeFontSize(payload.fontSize, 10);
   var rows = Array.isArray(payload.rows) ? payload.rows : [];
 
   if (!sheetId) {
@@ -361,7 +366,7 @@ function handleAppendResidentSecondaryRows(payload) {
     }
 
     sheet.getRange(targetRow, 3).setValue(row.C);
-    sheet.getRange(targetRow, 2, 1, 2).setFontFamily("Meiryo").setFontSize(10);
+    sheet.getRange(targetRow, 2, 1, 2).setFontFamily("Meiryo").setFontSize(fontSize);
     writtenRows.push(targetRow);
   });
 
@@ -530,6 +535,21 @@ function ensureRowsForWrite(sheet, startRow, rowCount) {
   if (requiredLastRow > maxRows) {
     sheet.insertRowsAfter(maxRows, requiredLastRow - maxRows);
   }
+}
+
+function normalizeFontSize(value, fallback) {
+  var numeric = Number(value);
+  if (!isFinite(numeric)) {
+    return fallback;
+  }
+  var rounded = Math.floor(numeric);
+  if (rounded < 6) {
+    return 6;
+  }
+  if (rounded > 72) {
+    return 72;
+  }
+  return rounded;
 }
 
 function columnToLetter(column) {

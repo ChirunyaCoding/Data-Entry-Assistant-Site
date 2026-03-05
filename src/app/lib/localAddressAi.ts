@@ -66,6 +66,10 @@ const composeTownInput = (input: LocalAddressInput): string => {
   return normalizeText(`${input.town}${input.ooaza}${input.aza}${input.koaza}`);
 };
 
+const isAmbiguousTownInput = (townInput: string): boolean => {
+  return townInput.length > 0 && townInput.length <= 1;
+};
+
 const toCorrection = (candidate: LocalAddressCandidate): LocalAddressCorrection => {
   return {
     postalCode: candidate.postalCode,
@@ -196,16 +200,25 @@ export const checkAddressWithLocalInference = async (params: {
   const best = scored[0];
 
   const hasInputPostal = normalizePostalCode(params.input.postalCode).length === 7;
+  const townInput = composeTownInput(params.input);
+  const hasAmbiguousTown = isAmbiguousTownInput(townInput);
   const hasCriticalMismatch =
     (normalizeText(params.input.prefecture) && !best.prefectureMatched) ||
     (normalizeText(params.input.city) && !best.cityMatched);
   const isValidAddress = !hasCriticalMismatch && best.confidence >= 0.82;
+  const canSuggestCorrection =
+    !hasAmbiguousTown && (best.postalMatched || best.townMatched);
   const corrected =
-    !isValidAddress && best.confidence >= 0.45 ? toCorrection(best.candidate) : null;
+    !isValidAddress && best.confidence >= 0.45 && canSuggestCorrection
+      ? toCorrection(best.candidate)
+      : null;
+  const reason = hasAmbiguousTown
+    ? "町域入力が短いため、候補の確定を保留しています。町域を2文字以上入力して再チェックしてください。"
+    : buildReason(best, hasInputPostal);
 
   return {
     isValidAddress,
-    reason: buildReason(best, hasInputPostal),
+    reason,
     confidence: best.confidence,
     corrected,
   };
