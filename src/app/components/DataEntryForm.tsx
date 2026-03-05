@@ -1637,6 +1637,8 @@ export function DataEntryForm() {
     useState<AddressCheckViewResult | null>(null);
   const [basicMapSearchError, setBasicMapSearchError] = useState("");
   const [basicMapEmbedUrl, setBasicMapEmbedUrl] = useState("");
+  const [basicMapDisplayedAddress, setBasicMapDisplayedAddress] = useState("");
+  const [isBasicMapLoaded, setIsBasicMapLoaded] = useState(false);
   const [residentAddressCheckErrorBySection, setResidentAddressCheckErrorBySection] =
     useState<Record<ResidentSection, string>>({
       depart: "",
@@ -1663,6 +1665,17 @@ export function DataEntryForm() {
   >({
     depart: "",
     registry: "",
+  });
+  const [residentMapDisplayedAddressBySection, setResidentMapDisplayedAddressBySection] =
+    useState<Record<ResidentSection, string>>({
+      depart: "",
+      registry: "",
+    });
+  const [residentMapLoadedBySection, setResidentMapLoadedBySection] = useState<
+    Record<ResidentSection, boolean>
+  >({
+    depart: false,
+    registry: false,
   });
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
   const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
@@ -2578,6 +2591,8 @@ export function DataEntryForm() {
       resetBasicAddressAiCheckState();
       setBasicMapSearchError("");
       setBasicMapEmbedUrl("");
+      setBasicMapDisplayedAddress("");
+      setIsBasicMapLoaded(false);
     }
 
     if (name === "postalCode") {
@@ -2993,6 +3008,14 @@ export function DataEntryForm() {
           ...prev,
           [residentSection]: "",
         }));
+        setResidentMapDisplayedAddressBySection((prev) => ({
+          ...prev,
+          [residentSection]: "",
+        }));
+        setResidentMapLoadedBySection((prev) => ({
+          ...prev,
+          [residentSection]: false,
+        }));
       }
     }
 
@@ -3379,6 +3402,8 @@ export function DataEntryForm() {
   const handleOpenBasicAddressInGoogleMaps = () => {
     setBasicMapSearchError("");
     setBasicMapEmbedUrl("");
+    setBasicMapDisplayedAddress("");
+    setIsBasicMapLoaded(false);
     const manualAddress = buildManualBasicAddressText(formData);
     if (!manualAddress) {
       setBasicMapSearchError("住所を入力してから地図表示してください。");
@@ -3393,6 +3418,7 @@ export function DataEntryForm() {
       return;
     }
 
+    setBasicMapDisplayedAddress(manualAddress);
     setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey));
   };
 
@@ -3483,6 +3509,14 @@ export function DataEntryForm() {
       ...prev,
       [section]: "",
     }));
+    setResidentMapDisplayedAddressBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
+    setResidentMapLoadedBySection((prev) => ({
+      ...prev,
+      [section]: false,
+    }));
 
     const manualAddress = buildManualResidentAddressText(residentFormData, section);
     if (!manualAddress) {
@@ -3506,6 +3540,10 @@ export function DataEntryForm() {
     setResidentMapEmbedUrlBySection((prev) => ({
       ...prev,
       [section]: buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey),
+    }));
+    setResidentMapDisplayedAddressBySection((prev) => ({
+      ...prev,
+      [section]: manualAddress,
     }));
   };
 
@@ -4721,6 +4759,8 @@ export function DataEntryForm() {
       setBasicAddressAiResult(null);
       setBasicMapSearchError("");
       setBasicMapEmbedUrl("");
+      setBasicMapDisplayedAddress("");
+      setIsBasicMapLoaded(false);
     } else {
       setResidentFormData({
         ...DEFAULT_RESIDENT_FORM_DATA,
@@ -4736,6 +4776,14 @@ export function DataEntryForm() {
       setResidentMapEmbedUrlBySection({
         depart: "",
         registry: "",
+      });
+      setResidentMapDisplayedAddressBySection({
+        depart: "",
+        registry: "",
+      });
+      setResidentMapLoadedBySection({
+        depart: false,
+        registry: false,
       });
     }
   };
@@ -5484,9 +5532,17 @@ export function DataEntryForm() {
                         src={basicMapEmbedUrl}
                         loading="lazy"
                         referrerPolicy="no-referrer-when-downgrade"
+                        onLoad={() => {
+                          setIsBasicMapLoaded(true);
+                        }}
                         className="h-64 w-full border-0"
                       />
                     </div>
+                  )}
+                  {isBasicMapLoaded && basicMapDisplayedAddress && (
+                    <p className="mt-2 text-[11px] text-emerald-900 break-all">
+                      検索住所: {basicMapDisplayedAddress}
+                    </p>
                   )}
                 </div>
                 {settings.isAddressCheckEnabled && (
@@ -6456,10 +6512,22 @@ export function DataEntryForm() {
                             src={residentMapEmbedUrlBySection.depart}
                             loading="lazy"
                             referrerPolicy="no-referrer-when-downgrade"
+                            onLoad={() => {
+                              setResidentMapLoadedBySection((prev) => ({
+                                ...prev,
+                                depart: true,
+                              }));
+                            }}
                             className="h-64 w-full border-0"
                           />
                         </div>
                       )}
+                      {residentMapLoadedBySection.depart &&
+                        residentMapDisplayedAddressBySection.depart && (
+                          <p className="mt-2 text-[11px] text-emerald-900 break-all">
+                            検索住所: {residentMapDisplayedAddressBySection.depart}
+                          </p>
+                        )}
                     </div>
 
                     <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
@@ -6489,10 +6557,22 @@ export function DataEntryForm() {
                             src={residentMapEmbedUrlBySection.registry}
                             loading="lazy"
                             referrerPolicy="no-referrer-when-downgrade"
+                            onLoad={() => {
+                              setResidentMapLoadedBySection((prev) => ({
+                                ...prev,
+                                registry: true,
+                              }));
+                            }}
                             className="h-64 w-full border-0"
                           />
                         </div>
                       )}
+                      {residentMapLoadedBySection.registry &&
+                        residentMapDisplayedAddressBySection.registry && (
+                          <p className="mt-2 text-[11px] text-emerald-900 break-all">
+                            検索住所: {residentMapDisplayedAddressBySection.registry}
+                          </p>
+                        )}
                     </div>
 
                     {settings.isAddressCheckEnabled && (
