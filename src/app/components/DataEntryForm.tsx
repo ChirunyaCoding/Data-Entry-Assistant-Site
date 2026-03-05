@@ -14,7 +14,12 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { type KenAllAddress } from "../lib/kenAll";
+import { loadKenAllData, searchKenAllAddresses, type KenAllAddress } from "../lib/kenAll";
+import {
+  checkAddressWithLocalLlm,
+  type LocalAddressCandidate,
+  type LocalAddressCheckResult,
+} from "../lib/localAddressAi";
 
 interface FormData {
   operator: string;
@@ -83,6 +88,11 @@ interface ResidentSecondaryEntry {
   id: number;
   fileName: string;
   name: string;
+}
+
+interface BasicAddressAiCheckViewResult extends LocalAddressCheckResult {
+  checkedAddress: string;
+  referenceCandidateCount: number;
 }
 
 const FULL_WIDTH_SPACE = "　";
@@ -209,6 +219,13 @@ const ENV_RESIDENT_SHEET_WEBHOOK_URL = (
   import.meta.env.VITE_RESIDENT_SHEET_WEBHOOK_URL ?? ""
 ).trim();
 const ENV_BASIC_SHEET_URL = (import.meta.env.VITE_BASIC_SHEET_URL ?? "").trim();
+const ENV_LOCAL_LLM_ENDPOINT = (
+  import.meta.env.VITE_LOCAL_LLM_ENDPOINT ?? "http://127.0.0.1:11434/api/chat"
+).trim();
+const ENV_LOCAL_LLM_MODEL = (import.meta.env.VITE_LOCAL_LLM_MODEL ?? "qwen2.5:7b").trim();
+const ENV_BASIC_SECONDARY_SHEET_URL = (
+  import.meta.env.VITE_BASIC_SECONDARY_SHEET_URL ?? ""
+).trim();
 const ENV_RESIDENT_PRIMARY_SHEET_URL = (
   import.meta.env.VITE_RESIDENT_PRIMARY_SHEET_URL ?? ""
 ).trim();
@@ -217,6 +234,7 @@ const ENV_RESIDENT_SECONDARY_SHEET_URL = (
 ).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
+const BASIC_SHEET_SELECTION_STORAGE_KEY = "data-entry-tool.basic-sheet-selection.v1";
 const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
   "data-entry-tool.resident-target-sheet-name.v1";
 const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1";
@@ -224,6 +242,7 @@ const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
+type BasicSheetSelection = "basicPrimary" | "basicSecondary";
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
 
 const BASIC_FIELD_ORDER = [
@@ -246,6 +265,17 @@ const BASIC_FIELD_ORDER = [
 ] as const;
 
 const DETAIL_ADDRESS_FIELDS = new Set<string>(["ooaza", "aza", "koaza"]);
+const BASIC_ADDRESS_FIELDS_FOR_AI_CHECK = new Set<string>([
+  "postalCode",
+  "prefecture",
+  "city",
+  "town",
+  "ooaza",
+  "aza",
+  "koaza",
+  "banchi",
+  "building",
+]);
 const RESIDENT_FIELD_ORDER = [
   "residentSelfName",
   "departName",
@@ -325,10 +355,14 @@ interface AppSettings {
   fixedOperatorName: string;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
+  isBasicSecondarySheetEnabled: boolean;
   isResidentSecondaryColumnBUppercase: boolean;
   basicSheetWebhookUrl: string;
   residentSheetWebhookUrl: string;
+  localLlmEndpoint: string;
+  localLlmModel: string;
   basicSheetUrl: string;
+  basicSecondarySheetUrl: string;
   residentPrimarySheetUrl: string;
   residentSecondarySheetUrl: string;
 }
@@ -338,10 +372,14 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   fixedOperatorName: "",
   isResidentSelfNameFixed: false,
   fixedResidentSelfName: "",
+  isBasicSecondarySheetEnabled: false,
   isResidentSecondaryColumnBUppercase: true,
   basicSheetWebhookUrl: ENV_BASIC_SHEET_WEBHOOK_URL,
   residentSheetWebhookUrl: ENV_RESIDENT_SHEET_WEBHOOK_URL,
+  localLlmEndpoint: ENV_LOCAL_LLM_ENDPOINT,
+  localLlmModel: ENV_LOCAL_LLM_MODEL,
   basicSheetUrl: ENV_BASIC_SHEET_URL,
+  basicSecondarySheetUrl: ENV_BASIC_SECONDARY_SHEET_URL,
   residentPrimarySheetUrl: ENV_RESIDENT_PRIMARY_SHEET_URL,
   residentSecondarySheetUrl: ENV_RESIDENT_SECONDARY_SHEET_URL,
 };
@@ -349,14 +387,20 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 type AppSettingsUrlField =
   | "basicSheetWebhookUrl"
   | "residentSheetWebhookUrl"
+  | "localLlmEndpoint"
+  | "localLlmModel"
   | "basicSheetUrl"
+  | "basicSecondarySheetUrl"
   | "residentPrimarySheetUrl"
   | "residentSecondarySheetUrl";
 
 const ENV_URL_KEY_TO_SETTING_FIELD: Record<string, AppSettingsUrlField> = {
   VITE_BASIC_SHEET_WEBHOOK_URL: "basicSheetWebhookUrl",
   VITE_RESIDENT_SHEET_WEBHOOK_URL: "residentSheetWebhookUrl",
+  VITE_LOCAL_LLM_ENDPOINT: "localLlmEndpoint",
+  VITE_LOCAL_LLM_MODEL: "localLlmModel",
   VITE_BASIC_SHEET_URL: "basicSheetUrl",
+  VITE_BASIC_SECONDARY_SHEET_URL: "basicSecondarySheetUrl",
   VITE_RESIDENT_PRIMARY_SHEET_URL: "residentPrimarySheetUrl",
   VITE_RESIDENT_SECONDARY_SHEET_URL: "residentSecondarySheetUrl",
 };
@@ -709,6 +753,7 @@ const normalizeSheetUrl = (rawUrl: string): string => {
     }
 
     parsedUrl.searchParams.delete("rm");
+    parsedUrl.hash = "";
 
     if (!parsedUrl.pathname.includes("/edit")) {
       parsedUrl.pathname = parsedUrl.pathname
@@ -862,6 +907,22 @@ const joinResidentAddressForSheet = (parts: string[]): string => {
 
 const joinBasicAddressForSheet = (parts: string[]): string => {
   return parts.map((part) => part.trim()).filter(Boolean).join("");
+};
+
+const buildManualBasicAddressText = (formData: FormData): string => {
+  return [
+    formData.prefecture,
+    formData.city,
+    formData.town,
+    formData.ooaza,
+    formData.aza,
+    formData.koaza,
+    formData.banchi,
+    formData.building,
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("");
 };
 
 const TIFF_EXTENSION_PATTERN = /\.tiff?$/i;
@@ -1202,6 +1263,10 @@ export function DataEntryForm() {
   const [isBasicFolderImporting, setIsBasicFolderImporting] = useState(false);
   const [basicSheetSyncError, setBasicSheetSyncError] = useState("");
   const [basicSheetSyncSuccess, setBasicSheetSyncSuccess] = useState("");
+  const [isBasicAddressAiChecking, setIsBasicAddressAiChecking] = useState(false);
+  const [basicAddressAiError, setBasicAddressAiError] = useState("");
+  const [basicAddressAiResult, setBasicAddressAiResult] =
+    useState<BasicAddressAiCheckViewResult | null>(null);
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
   const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
@@ -1210,6 +1275,20 @@ export function DataEntryForm() {
   const [sheetInitializeError, setSheetInitializeError] = useState("");
   const [sheetInitializeSuccess, setSheetInitializeSuccess] = useState("");
   const [viewMode, setViewMode] = useState<"pdf" | "sheet" | "kanji">("pdf");
+  const [basicSheetSelection, setBasicSheetSelection] = useState<BasicSheetSelection>(() => {
+    if (typeof window === "undefined") {
+      return "basicPrimary";
+    }
+
+    try {
+      const savedSelection = window.localStorage.getItem(
+        BASIC_SHEET_SELECTION_STORAGE_KEY
+      );
+      return savedSelection === "basicSecondary" ? "basicSecondary" : "basicPrimary";
+    } catch {
+      return "basicPrimary";
+    }
+  });
   const [residentSheetSelection, setResidentSheetSelection] =
     useState<ResidentSheetSelection>(() => {
       if (typeof window === "undefined") {
@@ -1280,10 +1359,13 @@ export function DataEntryForm() {
     }
   });
   const configuredSheetUrls = {
-    basic: settings.basicSheetUrl.trim(),
+    basicPrimary: settings.basicSheetUrl.trim(),
+    basicSecondary: settings.basicSecondarySheetUrl.trim(),
     residentPrimary: settings.residentPrimarySheetUrl.trim(),
     residentSecondary: settings.residentSecondarySheetUrl.trim(),
   } as const;
+  const effectiveBasicSheetSelection: BasicSheetSelection =
+    settings.isBasicSecondarySheetEnabled ? basicSheetSelection : "basicPrimary";
   const basicSheetWebhookConfig: SheetWebhookConfig = {
     envName: "VITE_BASIC_SHEET_WEBHOOK_URL",
     url: settings.basicSheetWebhookUrl.trim(),
@@ -1295,7 +1377,9 @@ export function DataEntryForm() {
   const activeSheetWebhookConfig =
     mode === "basic" ? basicSheetWebhookConfig : residentSheetWebhookConfig;
   const activeSheetUrl =
-    mode === "basic" ? configuredSheetUrls.basic : configuredSheetUrls[residentSheetSelection];
+    mode === "basic"
+      ? configuredSheetUrls[effectiveBasicSheetSelection]
+      : configuredSheetUrls[residentSheetSelection];
   const activeSheetId = extractGoogleSheetId(activeSheetUrl);
   const hasLoadedActiveSheetTabs = activeSheetId
     ? Object.prototype.hasOwnProperty.call(sheetTabsBySheetId, activeSheetId)
@@ -1325,10 +1409,23 @@ export function DataEntryForm() {
   const isResidentSecondaryEntryWriting = residentSecondaryWritingEntryId !== null;
   const isBasicListEntryWriting = basicListWritingEntryId !== null;
   const isResidentListEntryWriting = residentListWritingEntryId !== null;
+  const hasBasicAddressAiCorrection = Boolean(
+    basicAddressAiResult?.corrected &&
+      (basicAddressAiResult.corrected.postalCode ||
+        basicAddressAiResult.corrected.prefecture ||
+        basicAddressAiResult.corrected.city ||
+        basicAddressAiResult.corrected.town)
+  );
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
-  const residentSheetSelectionMessage =
+  const sheetSelectionMessage =
     mode === "basic"
-      ? "基本モードでは固定シートを表示します。"
+      ? settings.isBasicSecondarySheetEnabled
+        ? `基本モードでは${
+            effectiveBasicSheetSelection === "basicPrimary"
+              ? "基本シート1"
+              : "基本シート2"
+          }を表示中です。`
+        : "基本モードでは基本シート1を表示中です。"
       : `住民票モードでは${
           residentSheetSelection === "residentPrimary"
             ? "住民票シート1"
@@ -1513,6 +1610,10 @@ export function DataEntryForm() {
           typeof parsed.fixedResidentSelfName === "string"
             ? parsed.fixedResidentSelfName
             : "",
+        isBasicSecondarySheetEnabled:
+          typeof parsed.isBasicSecondarySheetEnabled === "boolean"
+            ? parsed.isBasicSecondarySheetEnabled
+            : DEFAULT_APP_SETTINGS.isBasicSecondarySheetEnabled,
         isResidentSecondaryColumnBUppercase:
           typeof parsed.isResidentSecondaryColumnBUppercase === "boolean"
             ? parsed.isResidentSecondaryColumnBUppercase
@@ -1525,10 +1626,22 @@ export function DataEntryForm() {
           typeof parsed.residentSheetWebhookUrl === "string"
             ? parsed.residentSheetWebhookUrl
             : DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+        localLlmEndpoint:
+          typeof parsed.localLlmEndpoint === "string"
+            ? parsed.localLlmEndpoint
+            : DEFAULT_APP_SETTINGS.localLlmEndpoint,
+        localLlmModel:
+          typeof parsed.localLlmModel === "string"
+            ? parsed.localLlmModel
+            : DEFAULT_APP_SETTINGS.localLlmModel,
         basicSheetUrl:
           typeof parsed.basicSheetUrl === "string"
             ? parsed.basicSheetUrl
             : DEFAULT_APP_SETTINGS.basicSheetUrl,
+        basicSecondarySheetUrl:
+          typeof parsed.basicSecondarySheetUrl === "string"
+            ? parsed.basicSecondarySheetUrl
+            : DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,
         residentPrimarySheetUrl:
           typeof parsed.residentPrimarySheetUrl === "string"
             ? parsed.residentPrimarySheetUrl
@@ -1585,6 +1698,18 @@ export function DataEntryForm() {
       });
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(BASIC_SHEET_SELECTION_STORAGE_KEY, basicSheetSelection);
+    } catch {
+      // 保存に失敗した場合はメモリ上の値を使う
+    }
+  }, [basicSheetSelection]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1826,10 +1951,18 @@ export function DataEntryForm() {
     isWorkerReady,
   ]);
 
+  const resetBasicAddressAiCheckState = () => {
+    setBasicAddressAiError("");
+    setBasicAddressAiResult(null);
+  };
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
+    if (BASIC_ADDRESS_FIELDS_FOR_AI_CHECK.has(name)) {
+      resetBasicAddressAiCheckState();
+    }
 
     if (name === "postalCode") {
       setActiveSuggestionIndex((prev) => ({ ...prev, postal: -1 }));
@@ -2319,6 +2452,136 @@ export function DataEntryForm() {
     };
   };
 
+  const collectBasicAddressAiReferenceCandidates = async (): Promise<
+    LocalAddressCandidate[]
+  > => {
+    const prefecture = formData.prefecture.trim();
+    const city = formData.city.trim();
+    const town = formData.town.trim();
+    const detailTown = joinBasicAddressForSheet([
+      formData.town,
+      formData.ooaza,
+      formData.aza,
+      formData.koaza,
+    ]).trim();
+    const hasAddressInput = Boolean(prefecture || city || town || detailTown);
+    if (!hasAddressInput) {
+      return [];
+    }
+
+    const addresses = await loadKenAllData();
+    const queries = [
+      { prefecture, city, town: detailTown },
+      { prefecture, city, town },
+      { prefecture, city, town: "" },
+    ];
+
+    const merged: LocalAddressCandidate[] = [];
+    const seen = new Set<string>();
+    for (const query of queries) {
+      const found = searchKenAllAddresses(addresses, query, 8);
+      for (const address of found) {
+        const key = `${address.postalCode}|${address.prefecture}|${address.city}|${address.town}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        merged.push({
+          postalCode: formatPostalCode(address.postalCode),
+          prefecture: address.prefecture,
+          city: address.city,
+          town: address.town,
+        });
+        if (merged.length >= 8) {
+          return merged;
+        }
+      }
+    }
+
+    return merged;
+  };
+
+  const handleBasicAddressAiCheck = async () => {
+    setBasicAddressAiError("");
+    setBasicAddressAiResult(null);
+
+    const manualAddress = buildManualBasicAddressText(formData);
+    const postalCode = formData.postalCode.trim();
+    if (!manualAddress && !postalCode) {
+      setBasicAddressAiError(
+        "手入力した住所または郵便番号を入力してからAIチェックしてください。"
+      );
+      return;
+    }
+
+    const endpoint = settings.localLlmEndpoint.trim();
+    if (!endpoint) {
+      setBasicAddressAiError(
+        "ローカルLLMエンドポイントが未設定です。設定から入力してください。"
+      );
+      return;
+    }
+
+    const model = settings.localLlmModel.trim();
+    if (!model) {
+      setBasicAddressAiError("ローカルLLMモデル名が未設定です。設定から入力してください。");
+      return;
+    }
+
+    setIsBasicAddressAiChecking(true);
+    try {
+      const candidates = await collectBasicAddressAiReferenceCandidates();
+      const result = await checkAddressWithLocalLlm({
+        endpoint,
+        model,
+        input: {
+          postalCode: formData.postalCode.trim(),
+          prefecture: formData.prefecture.trim(),
+          city: formData.city.trim(),
+          town: formData.town.trim(),
+          ooaza: formData.ooaza.trim(),
+          aza: formData.aza.trim(),
+          koaza: formData.koaza.trim(),
+          banchi: formData.banchi.trim(),
+          building: formData.building.trim(),
+        },
+        candidates,
+      });
+
+      setBasicAddressAiResult({
+        ...result,
+        checkedAddress: manualAddress || postalCode,
+        referenceCandidateCount: candidates.length,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "AIチェック中に不明なエラーが発生しました。";
+      setBasicAddressAiError(message);
+    } finally {
+      setIsBasicAddressAiChecking(false);
+    }
+  };
+
+  const handleApplyBasicAddressAiCorrection = () => {
+    const correction = basicAddressAiResult?.corrected;
+    if (!correction) {
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      postalCode: correction.postalCode
+        ? formatPostalCode(correction.postalCode)
+        : prev.postalCode,
+      prefecture: correction.prefecture || prev.prefecture,
+      city: correction.city || prev.city,
+      town: correction.town || prev.town,
+    }));
+    setBasicAddressAiError("");
+  };
+
   const upsertBasicEntryToList = (
     basicEntry: ReturnType<typeof createBasicEntryFromForm>,
     options?: {
@@ -2414,7 +2677,9 @@ export function DataEntryForm() {
   };
 
   const resolveBasicSheetTargetForWrite = () => {
-    const targetSheetId = extractGoogleSheetId(configuredSheetUrls.basic);
+    const targetSheetId = extractGoogleSheetId(
+      configuredSheetUrls[effectiveBasicSheetSelection]
+    );
     if (!targetSheetId) {
       setBasicSheetSyncError(
         "シートIDを取得できないため、シート反映をスキップしました。"
@@ -2469,6 +2734,7 @@ export function DataEntryForm() {
       basicEntry.koaza,
       basicEntry.banchi,
     ]);
+    const isSecondaryMapping = effectiveBasicSheetSelection === "basicSecondary";
 
     const payload: BasicSheetWritePayload = {
       action: "appendBasicRow",
@@ -2478,12 +2744,12 @@ export function DataEntryForm() {
       values: {
         A: basicEntry.operator,
         B: basicEntry.filename,
-        C: basicEntry.postalCode,
-        D: integratedAddress,
-        E: basicEntry.building,
-        F: basicEntry.company,
-        G: basicEntry.position,
-        H: basicEntry.name,
+        C: isSecondaryMapping ? basicEntry.position : basicEntry.postalCode,
+        D: isSecondaryMapping ? basicEntry.name : integratedAddress,
+        E: isSecondaryMapping ? basicEntry.company : basicEntry.building,
+        F: isSecondaryMapping ? basicEntry.postalCode : basicEntry.company,
+        G: isSecondaryMapping ? integratedAddress : basicEntry.position,
+        H: isSecondaryMapping ? basicEntry.building : basicEntry.name,
         I: basicEntry.phone,
         J: basicEntry.notes,
       },
@@ -2667,7 +2933,9 @@ export function DataEntryForm() {
     setBasicSheetSyncError("");
     setBasicSheetSyncSuccess("");
 
-    const targetSheetId = extractGoogleSheetId(configuredSheetUrls.basic);
+    const targetSheetId = extractGoogleSheetId(
+      configuredSheetUrls[effectiveBasicSheetSelection]
+    );
     if (!targetSheetId) {
       setBasicSheetSyncError(
         "シートIDを取得できないため、シート反映をスキップしました。"
@@ -3491,6 +3759,8 @@ export function DataEntryForm() {
       });
       setPdfFile(null);
       setPhoneInputMode("mobile");
+      setBasicAddressAiError("");
+      setBasicAddressAiResult(null);
     } else {
       setResidentFormData({
         residentSelfName: settings.isResidentSelfNameFixed
@@ -4193,6 +4463,81 @@ export function DataEntryForm() {
                 <p className="text-xs text-gray-500">
                   補完候補は ↑/↓ で移動し、Enter で選択できます。
                 </p>
+                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-blue-900">
+                        AI住所チェック（手入力住所）
+                      </p>
+                      <p className="text-[11px] text-blue-700">
+                        入力中の住所をローカルLLMで検証し、誤り候補があれば修正案を表示します。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleBasicAddressAiCheck();
+                      }}
+                      disabled={isBasicAddressAiChecking}
+                      className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                    >
+                      {isBasicAddressAiChecking ? "AI判定中..." : "AIチェック"}
+                    </button>
+                  </div>
+                  {basicAddressAiError && (
+                    <p className="mt-2 text-xs text-red-600">{basicAddressAiError}</p>
+                  )}
+                  {basicAddressAiResult && (
+                    <div className="mt-2 rounded border border-blue-100 bg-white px-2.5 py-2 text-xs text-gray-700 space-y-1">
+                      <div>
+                        判定:
+                        <span
+                          className={`ml-1 font-semibold ${
+                            basicAddressAiResult.isValidAddress
+                              ? "text-emerald-700"
+                              : "text-amber-700"
+                          }`}
+                        >
+                          {basicAddressAiResult.isValidAddress
+                            ? "実在の可能性が高い"
+                            : "誤りの可能性あり"}
+                        </span>
+                      </div>
+                      <div>理由: {basicAddressAiResult.reason}</div>
+                      <div>
+                        信頼度: {(basicAddressAiResult.confidence * 100).toFixed(0)}%
+                      </div>
+                      <div>参照候補件数: {basicAddressAiResult.referenceCandidateCount}件</div>
+                      <div className="truncate">判定対象: {basicAddressAiResult.checkedAddress}</div>
+                      {hasBasicAddressAiCorrection && (
+                        <div className="pt-1">
+                          <p>
+                            修正候補:
+                            {[
+                              basicAddressAiResult.corrected?.prefecture,
+                              basicAddressAiResult.corrected?.city,
+                              basicAddressAiResult.corrected?.town,
+                            ]
+                              .filter(Boolean)
+                              .join("") || "（住所候補なし）"}
+                            {basicAddressAiResult.corrected?.postalCode
+                              ? ` / ${formatPostalCode(
+                                  basicAddressAiResult.corrected.postalCode
+                                )}`
+                              : ""}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleApplyBasicAddressAiCorrection}
+                            className="mt-1 px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                          >
+                            候補を適用
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* 3列レイアウト - 大字、字、小字 */}
                 <div className="grid grid-cols-3 gap-4">
@@ -5813,8 +6158,34 @@ export function DataEntryForm() {
             <div className="px-4 pb-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-gray-500">
-                  {residentSheetSelectionMessage}
+                  {sheetSelectionMessage}
                 </span>
+                {mode === "basic" && settings.isBasicSecondarySheetEnabled && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setBasicSheetSelection("basicPrimary")}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                        effectiveBasicSheetSelection === "basicPrimary"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      基本シート1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBasicSheetSelection("basicSecondary")}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                        effectiveBasicSheetSelection === "basicSecondary"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      基本シート2
+                    </button>
+                  </>
+                )}
                 {mode === "resident" && (
                   <>
                     <button
@@ -6047,6 +6418,19 @@ export function DataEntryForm() {
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
+                checked={settings.isBasicSecondarySheetEnabled}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isBasicSecondarySheetEnabled: e.target.checked,
+                  }))
+                }
+              />
+              基本シート2を有効化する
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
                 checked={settings.isResidentSecondaryColumnBUppercase}
                 onChange={(e) =>
                   setSettings((prev) => ({
@@ -6069,7 +6453,11 @@ export function DataEntryForm() {
                         basicSheetWebhookUrl: DEFAULT_APP_SETTINGS.basicSheetWebhookUrl,
                         residentSheetWebhookUrl:
                           DEFAULT_APP_SETTINGS.residentSheetWebhookUrl,
+                        localLlmEndpoint: DEFAULT_APP_SETTINGS.localLlmEndpoint,
+                        localLlmModel: DEFAULT_APP_SETTINGS.localLlmModel,
                         basicSheetUrl: DEFAULT_APP_SETTINGS.basicSheetUrl,
+                        basicSecondarySheetUrl:
+                          DEFAULT_APP_SETTINGS.basicSecondarySheetUrl,
                         residentPrimarySheetUrl:
                           DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
                         residentSecondarySheetUrl:
@@ -6147,6 +6535,40 @@ export function DataEntryForm() {
               </div>
               <div>
                 <label className="block text-[11px] text-gray-600 mb-1">
+                  ローカルLLM エンドポイント
+                </label>
+                <input
+                  type="text"
+                  value={settings.localLlmEndpoint}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      localLlmEndpoint: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_LOCAL_LLM_ENDPOINT"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  ローカルLLM モデル名
+                </label>
+                <input
+                  type="text"
+                  value={settings.localLlmModel}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      localLlmModel: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_LOCAL_LLM_MODEL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
                   基本モード シートURL
                 </label>
                 <input
@@ -6160,6 +6582,23 @@ export function DataEntryForm() {
                   }
                   className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="VITE_BASIC_SHEET_URL"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-600 mb-1">
+                  基本シート2 URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.basicSecondarySheetUrl}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      basicSecondarySheetUrl: e.target.value,
+                    }))
+                  }
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="VITE_BASIC_SECONDARY_SHEET_URL"
                 />
               </div>
               <div>
