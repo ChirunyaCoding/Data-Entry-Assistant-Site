@@ -38,6 +38,20 @@ interface OllamaChatResponse {
   response?: string;
 }
 
+const getBrowserOrigin = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin;
+};
+
+const isMixedContentRequest = (endpoint: string): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.location.protocol === "https:" && endpoint.startsWith("http://");
+};
+
 const clampConfidence = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
@@ -179,6 +193,11 @@ export const checkAddressWithLocalLlm = async (params: {
   if (!model) {
     throw new Error("ローカルLLMモデル名が未設定です。");
   }
+  if (isMixedContentRequest(endpoint)) {
+    throw new Error(
+      "このページはHTTPSで開かれているため、HTTPのローカルLLMへ接続できません。HTTP配信で開くか、HTTPS対応のローカルプロキシを利用してください。"
+    );
+  }
 
   const controller = new AbortController();
   const timeoutMs = params.timeoutMs ?? 30000;
@@ -216,6 +235,23 @@ export const checkAddressWithLocalLlm = async (params: {
     });
 
     if (!response.ok) {
+      const rawBody = await response.text().catch(() => "");
+      if (response.status === 403) {
+        const origin = getBrowserOrigin();
+        throw new Error(
+          [
+            "ローカルLLMがCORSで拒否しました (403)。",
+            origin
+              ? `Ollama起動時に OLLAMA_ORIGINS に ${origin} を追加してください。`
+              : "Ollama起動時に OLLAMA_ORIGINS に現在の画面オリジンを追加してください。",
+          ].join(" ")
+        );
+      }
+      if (rawBody.includes("model") && rawBody.includes("not found")) {
+        throw new Error(
+          `ローカルLLMモデル「${model}」が見つかりません。ollama ls で存在するモデル名を設定してください。`
+        );
+      }
       throw new Error(
         `ローカルLLM呼び出しに失敗しました (${response.status} ${response.statusText})`
       );
@@ -233,6 +269,18 @@ export const checkAddressWithLocalLlm = async (params: {
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("ローカルLLMの応答がタイムアウトしました。");
+    }
+    if (error instanceof TypeError) {
+      const origin = getBrowserOrigin();
+      throw new Error(
+        [
+          `ローカルLLMへ接続できませんでした。endpoint: ${endpoint}`,
+          "Ollamaが起動中か確認してください（例: http://127.0.0.1:11434/api/tags）。",
+          origin
+            ? `CORS対策として OLLAMA_ORIGINS に ${origin} を追加してください。`
+            : "CORS対策として OLLAMA_ORIGINS に現在の画面オリジンを追加してください。",
+        ].join(" ")
+      );
     }
     throw error;
   } finally {
