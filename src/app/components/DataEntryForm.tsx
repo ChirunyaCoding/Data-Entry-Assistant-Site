@@ -297,6 +297,9 @@ interface ReloadPersistedState {
   phoneInputMode: PhoneInputMode;
   formData: FormData;
   residentFormData: ResidentFormData;
+  savedEntries: SavedEntry[];
+  savedResidentEntries: SavedResidentEntry[];
+  residentSecondaryEntries: ResidentSecondaryEntry[];
 }
 
 const readStringField = (source: Record<string, unknown>, key: string): string => {
@@ -352,6 +355,96 @@ const normalizeResidentFormDataFromUnknown = (value: unknown): ResidentFormData 
     registryBuilding: readStringField(record, "registryBuilding"),
     residentAlias: readStringField(record, "residentAlias"),
   };
+};
+
+const normalizeSheetRowsByTargetFromUnknown = (
+  value: unknown
+): Record<string, number> | undefined => {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const entries = Object.entries(source).flatMap(([key, row]) => {
+    const normalizedRow = normalizeSheetRow(row);
+    return normalizedRow === null ? [] : ([[key, normalizedRow]] as const);
+  });
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(entries);
+};
+
+const normalizeSavedEntriesFromUnknown = (value: unknown): SavedEntry[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const normalizedId = normalizeSheetRow(record.id) ?? index + 1;
+    return [
+      {
+        ...normalizeFormDataFromUnknown(record),
+        id: normalizedId,
+        savedAt: readStringField(record, "savedAt"),
+        sheetRowsByTarget: normalizeSheetRowsByTargetFromUnknown(
+          record.sheetRowsByTarget
+        ),
+      },
+    ];
+  });
+};
+
+const normalizeSavedResidentEntriesFromUnknown = (value: unknown): SavedResidentEntry[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const normalizedId = normalizeSheetRow(record.id) ?? index + 1;
+    return [
+      {
+        ...normalizeResidentFormDataFromUnknown(record),
+        id: normalizedId,
+        savedAt: readStringField(record, "savedAt"),
+        sheetRowsByTarget: normalizeSheetRowsByTargetFromUnknown(
+          record.sheetRowsByTarget
+        ),
+      },
+    ];
+  });
+};
+
+const normalizeResidentSecondaryEntriesFromUnknown = (
+  value: unknown
+): ResidentSecondaryEntry[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const normalizedId = normalizeSheetRow(record.id) ?? index + 1;
+    return [
+      {
+        id: normalizedId,
+        fileName: readStringField(record, "fileName"),
+        name: readStringField(record, "name"),
+      },
+    ];
+  });
 };
 
 const openReloadPdfDatabase = (): Promise<IDBDatabase> => {
@@ -1214,6 +1307,10 @@ const buildManualResidentAddressText = (
     .join("");
 };
 
+const buildGoogleMapsSearchUrl = (address: string): string => {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+};
+
 const isPdfFile = (file: File): boolean => {
   const normalizedName = file.name.toLowerCase();
   return file.type === "application/pdf" || normalizedName.endsWith(".pdf");
@@ -1529,6 +1626,7 @@ export function DataEntryForm() {
   const [basicAddressAiError, setBasicAddressAiError] = useState("");
   const [basicAddressAiResult, setBasicAddressAiResult] =
     useState<AddressCheckViewResult | null>(null);
+  const [basicMapSearchError, setBasicMapSearchError] = useState("");
   const [residentAddressCheckErrorBySection, setResidentAddressCheckErrorBySection] =
     useState<Record<ResidentSection, string>>({
       depart: "",
@@ -1544,6 +1642,12 @@ export function DataEntryForm() {
       depart: false,
       registry: false,
     });
+  const [residentMapSearchErrorBySection, setResidentMapSearchErrorBySection] = useState<
+    Record<ResidentSection, string>
+  >({
+    depart: "",
+    registry: "",
+  });
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
   const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
@@ -2008,6 +2112,13 @@ export function DataEntryForm() {
             ? settings.fixedResidentSelfName
             : normalizedResidentFormData.residentSelfName,
         });
+        setSavedEntries(normalizeSavedEntriesFromUnknown(parsed.savedEntries));
+        setSavedResidentEntries(
+          normalizeSavedResidentEntriesFromUnknown(parsed.savedResidentEntries)
+        );
+        setResidentSecondaryEntries(
+          normalizeResidentSecondaryEntriesFromUnknown(parsed.residentSecondaryEntries)
+        );
       }
     } catch {
       // 保存状態の復元に失敗した場合は既定値を使う
@@ -2048,6 +2159,9 @@ export function DataEntryForm() {
       phoneInputMode,
       formData,
       residentFormData,
+      savedEntries,
+      savedResidentEntries,
+      residentSecondaryEntries,
     };
 
     try {
@@ -2064,6 +2178,9 @@ export function DataEntryForm() {
     phoneInputMode,
     formData,
     residentFormData,
+    savedEntries,
+    savedResidentEntries,
+    residentSecondaryEntries,
   ]);
 
   useEffect(() => {
@@ -2439,6 +2556,7 @@ export function DataEntryForm() {
     const { name, value } = e.target;
     if (BASIC_ADDRESS_FIELDS_FOR_AI_CHECK.has(name)) {
       resetBasicAddressAiCheckState();
+      setBasicMapSearchError("");
     }
 
     if (name === "postalCode") {
@@ -2846,6 +2964,10 @@ export function DataEntryForm() {
       setResidentActiveSection(residentSection);
       if (RESIDENT_ADDRESS_FIELDS_FOR_ADDRESS_CHECK.has(name)) {
         resetResidentAddressCheckState(residentSection);
+        setResidentMapSearchErrorBySection((prev) => ({
+          ...prev,
+          [residentSection]: "",
+        }));
       }
     }
 
@@ -3229,6 +3351,31 @@ export function DataEntryForm() {
     }
   };
 
+  const handleOpenBasicAddressInGoogleMaps = () => {
+    setBasicMapSearchError("");
+    const manualAddress = buildManualBasicAddressText(formData);
+    if (!manualAddress) {
+      setBasicMapSearchError("住所を入力してからGoogle Maps検索してください。");
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      setBasicMapSearchError("この環境ではGoogle Maps検索を開けません。");
+      return;
+    }
+
+    const opened = window.open(
+      buildGoogleMapsSearchUrl(manualAddress),
+      "_blank",
+      "noopener,noreferrer"
+    );
+    if (!opened) {
+      setBasicMapSearchError(
+        "Google Mapsを開けませんでした。ブラウザのポップアップ設定を確認してください。"
+      );
+    }
+  };
+
   const handleResidentAddressCheck = async (section: ResidentSection) => {
     setResidentAddressCheckErrorBySection((prev) => ({
       ...prev,
@@ -3303,6 +3450,43 @@ export function DataEntryForm() {
       setResidentAddressCheckingBySection((prev) => ({
         ...prev,
         [section]: false,
+      }));
+    }
+  };
+
+  const handleOpenResidentAddressInGoogleMaps = (section: ResidentSection) => {
+    setResidentMapSearchErrorBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
+
+    const manualAddress = buildManualResidentAddressText(residentFormData, section);
+    if (!manualAddress) {
+      setResidentMapSearchErrorBySection((prev) => ({
+        ...prev,
+        [section]: "住所を入力してからGoogle Maps検索してください。",
+      }));
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      setResidentMapSearchErrorBySection((prev) => ({
+        ...prev,
+        [section]: "この環境ではGoogle Maps検索を開けません。",
+      }));
+      return;
+    }
+
+    const opened = window.open(
+      buildGoogleMapsSearchUrl(manualAddress),
+      "_blank",
+      "noopener,noreferrer"
+    );
+    if (!opened) {
+      setResidentMapSearchErrorBySection((prev) => ({
+        ...prev,
+        [section]:
+          "Google Mapsを開けませんでした。ブラウザのポップアップ設定を確認してください。",
       }));
     }
   };
@@ -3608,7 +3792,7 @@ export function DataEntryForm() {
 
       if (options?.autoSaveToList ?? true) {
         upsertBasicEntryToList(basicEntry, {
-          clearAfterSave: false,
+          clearAfterSave: typeof options?.singleEntryId !== "number",
           skipDuplicateOnInsert: true,
           writtenPosition,
         });
@@ -4182,7 +4366,7 @@ export function DataEntryForm() {
 
       if (options?.autoSaveToList ?? true) {
         upsertResidentEntryToList(residentEntry, {
-          clearAfterSave: false,
+          clearAfterSave: typeof options?.singleEntryId !== "number",
           skipDuplicateOnInsert: true,
           writtenPosition,
         });
@@ -4517,6 +4701,7 @@ export function DataEntryForm() {
       });
       setBasicAddressAiError("");
       setBasicAddressAiResult(null);
+      setBasicMapSearchError("");
     } else {
       setResidentFormData({
         ...DEFAULT_RESIDENT_FORM_DATA,
@@ -4525,6 +4710,10 @@ export function DataEntryForm() {
           : DEFAULT_RESIDENT_FORM_DATA.residentSelfName,
       });
       resetResidentAddressCheckState();
+      setResidentMapSearchErrorBySection({
+        depart: "",
+        registry: "",
+      });
     }
   };
 
@@ -5249,6 +5438,23 @@ export function DataEntryForm() {
                 <p className="text-xs text-gray-500">
                   補完候補は ↑/↓ で移動し、Enter で選択できます。
                 </p>
+                <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-emerald-900">
+                      入力中の住所を Google Maps で確認できます。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleOpenBasicAddressInGoogleMaps}
+                      className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                    >
+                      Google Mapsで検索
+                    </button>
+                  </div>
+                  {basicMapSearchError && (
+                    <p className="mt-2 text-xs text-red-600">{basicMapSearchError}</p>
+                  )}
+                </div>
                 {settings.isAddressCheckEnabled && (
                   <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -6187,6 +6393,50 @@ export function DataEntryForm() {
                             )}
                           </div>
                         )}
+                    </div>
+
+                    <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-emerald-900">
+                          転出住所を Google Maps で確認できます。
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleOpenResidentAddressInGoogleMaps("depart");
+                          }}
+                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                        >
+                          Google Mapsで検索
+                        </button>
+                      </div>
+                      {residentMapSearchErrorBySection.depart && (
+                        <p className="mt-2 text-xs text-red-600">
+                          {residentMapSearchErrorBySection.depart}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-emerald-900">
+                          本籍住所を Google Maps で確認できます。
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleOpenResidentAddressInGoogleMaps("registry");
+                          }}
+                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                        >
+                          Google Mapsで検索
+                        </button>
+                      </div>
+                      {residentMapSearchErrorBySection.registry && (
+                        <p className="mt-2 text-xs text-red-600">
+                          {residentMapSearchErrorBySection.registry}
+                        </p>
+                      )}
                     </div>
 
                     {settings.isAddressCheckEnabled && (
