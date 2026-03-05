@@ -526,6 +526,10 @@ const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
     return splitByPattern(digits, [3, 4, 4]);
   }
 
+  if (digits.startsWith("0289")) {
+    return splitByPattern(digits.slice(0, 10), [4, 2, 4]);
+  }
+
   if (digits.startsWith("03") || digits.startsWith("06")) {
     return splitByPattern(digits, [2, 4, 4]);
   }
@@ -1563,6 +1567,8 @@ export function DataEntryForm() {
             ? "住民票シート1"
             : "住民票シート2"
         }を表示中です。`;
+  const isBasicSecondarySheetMode =
+    mode === "basic" && effectiveBasicSheetSelection === "basicSecondary";
   const [isKenAllLoading, setIsKenAllLoading] = useState(false);
   const [kenAllLoadError, setKenAllLoadError] = useState<string | null>(null);
   const [postalCodeSuggestions, setPostalCodeSuggestions] = useState<KenAllAddress[]>([]);
@@ -4639,6 +4645,50 @@ export function DataEntryForm() {
                   </div>
                 </div>
 
+                {isBasicSecondarySheetMode && (
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        肩書
+                      </label>
+                      <input
+                        type="text"
+                        name="position"
+                        value={formData.position}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="役職・肩書を入力"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        氏名
+                      </label>
+                      <input
+                        type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="氏名を入力"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        会社名
+                      </label>
+                      <input
+                        type="text"
+                        name="company"
+                        value={formData.company}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="会社名を入力"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* 郵便番号 */}
                 <div
                   className="relative"
@@ -5104,54 +5154,7 @@ export function DataEntryForm() {
                   </div>
                 </div>
 
-                {/* 2列レイアウト - 会社名、肩書、氏名、電話番号 */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* 会社名 */}
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      会社名
-                    </label>
-                    <input
-                      type="text"
-                      name="company"
-                      value={formData.company}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="会社名を入力"
-                    />
-                  </div>
-
-                  {/* 肩書 */}
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      肩書
-                    </label>
-                    <input
-                      type="text"
-                      name="position"
-                      value={formData.position}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="役職・肩書を入力"
-                    />
-                  </div>
-
-                  {/* 氏名 */}
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      氏名
-                    </label>
-                    <input
-                      type="text"
-                      name="name"
-                      value={formData.name}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="氏名を入力"
-                    />
-                  </div>
-
-                  {/* 電話番号 */}
+                {isBasicSecondarySheetMode ? (
                   <div>
                     <label className="block text-sm text-gray-700 mb-1.5">
                       電話番号
@@ -5194,7 +5197,98 @@ export function DataEntryForm() {
                       通常: 携帯番号 / Shift押下: 固定電話形式
                     </p>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* 会社名 */}
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        会社名
+                      </label>
+                      <input
+                        type="text"
+                        name="company"
+                        value={formData.company}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="会社名を入力"
+                      />
+                    </div>
+
+                    {/* 肩書 */}
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        肩書
+                      </label>
+                      <input
+                        type="text"
+                        name="position"
+                        value={formData.position}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="役職・肩書を入力"
+                      />
+                    </div>
+
+                    {/* 氏名 */}
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        氏名
+                      </label>
+                      <input
+                        type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="氏名を入力"
+                      />
+                    </div>
+
+                    {/* 電話番号 */}
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-1.5">
+                        電話番号
+                      </label>
+                      <input
+                        type="tel"
+                        name="phone"
+                        value={formData.phone}
+                        onChange={handleChange}
+                        onFocus={() => setPhoneInputMode("mobile")}
+                        onKeyDown={(e) => {
+                          if (e.key === "Shift") {
+                            setPhoneInputMode("landline");
+                            return;
+                          }
+
+                          if (!e.shiftKey) {
+                            return;
+                          }
+
+                          const mappedDigit = SHIFTED_NUMBER_TO_DIGIT_MAP[e.key];
+                          if (!mappedDigit) {
+                            return;
+                          }
+
+                          e.preventDefault();
+                          setPhoneInputMode("landline");
+                          setFormData((prev) => ({
+                            ...prev,
+                            phone: formatPhoneNumber(
+                              `${prev.phone}${mappedDigit}`,
+                              "landline"
+                            ),
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="000-0000-0000"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        通常: 携帯番号 / Shift押下: 固定電話形式
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* 備考（折り畳み式） */}
                 <div className="border border-gray-300 rounded">
