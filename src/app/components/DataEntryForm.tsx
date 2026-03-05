@@ -91,7 +91,7 @@ interface ResidentSecondaryEntry {
   name: string;
 }
 
-interface BasicAddressAiCheckViewResult extends LocalAddressCheckResult {
+interface AddressCheckViewResult extends LocalAddressCheckResult {
   checkedAddress: string;
   referenceCandidateCount: number;
 }
@@ -276,6 +276,24 @@ const BASIC_ADDRESS_FIELDS_FOR_AI_CHECK = new Set<string>([
   "banchi",
   "building",
 ]);
+const RESIDENT_ADDRESS_FIELDS_FOR_ADDRESS_CHECK = new Set<string>([
+  "departPrefecture",
+  "departCity",
+  "departTown",
+  "departOoaza",
+  "departAza",
+  "departKoaza",
+  "departBanchi",
+  "departBuilding",
+  "registryPrefecture",
+  "registryCity",
+  "registryTown",
+  "registryOoaza",
+  "registryAza",
+  "registryKoaza",
+  "registryBanchi",
+  "registryBuilding",
+]);
 const RESIDENT_FIELD_ORDER = [
   "residentSelfName",
   "departName",
@@ -356,6 +374,7 @@ interface AppSettings {
   isFilenameFixed: boolean;
   fixedFilename: string;
   writeFontSize: number;
+  isAddressCheckEnabled: boolean;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
   isBasicSecondarySheetEnabled: boolean;
@@ -374,6 +393,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   isFilenameFixed: false,
   fixedFilename: "",
   writeFontSize: DEFAULT_SHEET_WRITE_FONT_SIZE,
+  isAddressCheckEnabled: true,
   isResidentSelfNameFixed: false,
   fixedResidentSelfName: "",
   isBasicSecondarySheetEnabled: false,
@@ -968,6 +988,41 @@ const buildManualBasicAddressText = (formData: FormData): string => {
     .join("");
 };
 
+const buildManualResidentAddressText = (
+  formData: ResidentFormData,
+  section: ResidentSection
+): string => {
+  if (section === "depart") {
+    return [
+      formData.departPrefecture,
+      formData.departCity,
+      formData.departTown,
+      formData.departOoaza,
+      formData.departAza,
+      formData.departKoaza,
+      formData.departBanchi,
+      formData.departBuilding,
+    ]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join("");
+  }
+
+  return [
+    formData.registryPrefecture,
+    formData.registryCity,
+    formData.registryTown,
+    formData.registryOoaza,
+    formData.registryAza,
+    formData.registryKoaza,
+    formData.registryBanchi,
+    formData.registryBuilding,
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("");
+};
+
 const isPdfFile = (file: File): boolean => {
   const normalizedName = file.name.toLowerCase();
   return file.type === "application/pdf" || normalizedName.endsWith(".pdf");
@@ -1314,7 +1369,22 @@ export function DataEntryForm() {
   const [isBasicAddressAiChecking, setIsBasicAddressAiChecking] = useState(false);
   const [basicAddressAiError, setBasicAddressAiError] = useState("");
   const [basicAddressAiResult, setBasicAddressAiResult] =
-    useState<BasicAddressAiCheckViewResult | null>(null);
+    useState<AddressCheckViewResult | null>(null);
+  const [residentAddressCheckErrorBySection, setResidentAddressCheckErrorBySection] =
+    useState<Record<ResidentSection, string>>({
+      depart: "",
+      registry: "",
+    });
+  const [residentAddressCheckResultBySection, setResidentAddressCheckResultBySection] =
+    useState<Record<ResidentSection, AddressCheckViewResult | null>>({
+      depart: null,
+      registry: null,
+    });
+  const [residentAddressCheckingBySection, setResidentAddressCheckingBySection] =
+    useState<Record<ResidentSection, boolean>>({
+      depart: false,
+      registry: false,
+    });
   const [isResidentSheetSaving, setIsResidentSheetSaving] = useState(false);
   const [isResidentFolderImporting, setIsResidentFolderImporting] = useState(false);
   const [residentSheetSyncError, setResidentSheetSyncError] = useState("");
@@ -1463,6 +1533,20 @@ export function DataEntryForm() {
         basicAddressAiResult.corrected.prefecture ||
         basicAddressAiResult.corrected.city ||
         basicAddressAiResult.corrected.town)
+  );
+  const hasDepartAddressCheckCorrection = Boolean(
+    residentAddressCheckResultBySection.depart?.corrected &&
+      (residentAddressCheckResultBySection.depart.corrected.postalCode ||
+        residentAddressCheckResultBySection.depart.corrected.prefecture ||
+        residentAddressCheckResultBySection.depart.corrected.city ||
+        residentAddressCheckResultBySection.depart.corrected.town)
+  );
+  const hasRegistryAddressCheckCorrection = Boolean(
+    residentAddressCheckResultBySection.registry?.corrected &&
+      (residentAddressCheckResultBySection.registry.corrected.postalCode ||
+        residentAddressCheckResultBySection.registry.corrected.prefecture ||
+        residentAddressCheckResultBySection.registry.corrected.city ||
+        residentAddressCheckResultBySection.registry.corrected.town)
   );
   const residentTargetSheetName = mode === "resident" ? activeSelectedSheetName : "";
   const sheetSelectionMessage =
@@ -1667,6 +1751,10 @@ export function DataEntryForm() {
         fixedFilename:
           typeof parsed.fixedFilename === "string" ? parsed.fixedFilename : "",
         writeFontSize: normalizeSheetWriteFontSize(parsed.writeFontSize),
+        isAddressCheckEnabled:
+          typeof parsed.isAddressCheckEnabled === "boolean"
+            ? parsed.isAddressCheckEnabled
+            : DEFAULT_APP_SETTINGS.isAddressCheckEnabled,
         isResidentSelfNameFixed: Boolean(parsed.isResidentSelfNameFixed),
         fixedResidentSelfName:
           typeof parsed.fixedResidentSelfName === "string"
@@ -1909,6 +1997,14 @@ export function DataEntryForm() {
   }, [settings.fixedResidentSelfName, settings.isResidentSelfNameFixed]);
 
   useEffect(() => {
+    if (settings.isAddressCheckEnabled) {
+      return;
+    }
+    resetBasicAddressAiCheckState();
+    resetResidentAddressCheckState();
+  }, [settings.isAddressCheckEnabled]);
+
+  useEffect(() => {
     setFormData((prev) => ({
       ...prev,
       phone: formatPhoneNumber(prev.phone, phoneInputMode),
@@ -2019,6 +2115,32 @@ export function DataEntryForm() {
   const resetBasicAddressAiCheckState = () => {
     setBasicAddressAiError("");
     setBasicAddressAiResult(null);
+  };
+  const resetResidentAddressCheckState = (section?: ResidentSection) => {
+    if (!section) {
+      setResidentAddressCheckErrorBySection({
+        depart: "",
+        registry: "",
+      });
+      setResidentAddressCheckResultBySection({
+        depart: null,
+        registry: null,
+      });
+      setResidentAddressCheckingBySection({
+        depart: false,
+        registry: false,
+      });
+      return;
+    }
+
+    setResidentAddressCheckErrorBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
+    setResidentAddressCheckResultBySection((prev) => ({
+      ...prev,
+      [section]: null,
+    }));
   };
 
   const handleChange = (
@@ -2283,6 +2405,7 @@ export function DataEntryForm() {
     target: AddressSuggestionTarget = "basic"
   ) => {
     if (target === "basic") {
+      resetBasicAddressAiCheckState();
       setFormData((prev) => ({
         ...prev,
         postalCode: formatPostalCode(address.postalCode),
@@ -2291,6 +2414,7 @@ export function DataEntryForm() {
         town: sanitizeTownValue(address.town),
       }));
     } else {
+      resetResidentAddressCheckState(target);
       const prefectureField = getResidentAddressFieldName(target, "prefecture");
       const cityField = getResidentAddressFieldName(target, "city");
       const townField = getResidentAddressFieldName(target, "town");
@@ -2315,11 +2439,13 @@ export function DataEntryForm() {
     target: AddressSuggestionTarget = "basic"
   ) => {
     if (target === "basic") {
+      resetBasicAddressAiCheckState();
       setFormData((prev) => ({
         ...prev,
         prefecture,
       }));
     } else {
+      resetResidentAddressCheckState(target);
       const prefectureField = getResidentAddressFieldName(target, "prefecture");
       setResidentFormData((prev) => ({
         ...prev,
@@ -2336,12 +2462,14 @@ export function DataEntryForm() {
     target: AddressSuggestionTarget = "basic"
   ) => {
     if (target === "basic") {
+      resetBasicAddressAiCheckState();
       setFormData((prev) => ({
         ...prev,
         prefecture: address.prefecture,
         city: address.city,
       }));
     } else {
+      resetResidentAddressCheckState(target);
       const prefectureField = getResidentAddressFieldName(target, "prefecture");
       const cityField = getResidentAddressFieldName(target, "city");
       setResidentFormData((prev) => ({
@@ -2426,6 +2554,9 @@ export function DataEntryForm() {
     const residentSection = getResidentSectionFromFieldName(name);
     if (residentSection) {
       setResidentActiveSection(residentSection);
+      if (RESIDENT_ADDRESS_FIELDS_FOR_ADDRESS_CHECK.has(name)) {
+        resetResidentAddressCheckState(residentSection);
+      }
     }
 
     if (name === "departTown" || name === "registryTown") {
@@ -2649,6 +2780,117 @@ export function DataEntryForm() {
     return merged;
   };
 
+  const collectResidentAddressReferenceCandidates = async (
+    section: ResidentSection
+  ): Promise<LocalAddressCandidate[]> => {
+    const addresses = await loadKenAllData();
+    const prefecture =
+      section === "depart"
+        ? residentFormData.departPrefecture.trim()
+        : residentFormData.registryPrefecture.trim();
+    const city =
+      section === "depart"
+        ? residentFormData.departCity.trim()
+        : residentFormData.registryCity.trim();
+    const town =
+      section === "depart"
+        ? residentFormData.departTown.trim()
+        : residentFormData.registryTown.trim();
+    const detailTown =
+      section === "depart"
+        ? joinResidentAddressForSheet([
+            residentFormData.departTown,
+            residentFormData.departOoaza,
+            residentFormData.departAza,
+            residentFormData.departKoaza,
+          ]).trim()
+        : joinResidentAddressForSheet([
+            residentFormData.registryTown,
+            residentFormData.registryOoaza,
+            residentFormData.registryAza,
+            residentFormData.registryKoaza,
+          ]).trim();
+    const hasAddressInput = Boolean(prefecture || city || town || detailTown);
+    if (!hasAddressInput) {
+      return [];
+    }
+
+    const merged: LocalAddressCandidate[] = [];
+    const seen = new Set<string>();
+    const pushAddressCandidate = (candidate: LocalAddressCandidate) => {
+      const key = `${candidate.postalCode}|${candidate.prefecture}|${candidate.city}|${candidate.town}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      merged.push(candidate);
+    };
+
+    const townSuggestions = findTownSuggestions(
+      addresses,
+      {
+        prefecture,
+        city,
+        town: detailTown || town,
+      },
+      8
+    );
+    for (const address of townSuggestions) {
+      pushAddressCandidate({
+        postalCode: formatPostalCode(address.postalCode),
+        prefecture: address.prefecture,
+        city: address.city,
+        town: address.town,
+      });
+      if (merged.length >= 8) {
+        return merged;
+      }
+    }
+
+    const citySuggestions = findCitySuggestions(
+      addresses,
+      {
+        prefecture,
+        city,
+        town: "",
+      },
+      8
+    );
+    for (const address of citySuggestions) {
+      pushAddressCandidate({
+        postalCode: formatPostalCode(address.postalCode),
+        prefecture: address.prefecture,
+        city: address.city,
+        town: address.town || "",
+      });
+      if (merged.length >= 8) {
+        return merged;
+      }
+    }
+
+    const queries = [
+      { prefecture, city, town: detailTown },
+      { prefecture, city, town },
+      { prefecture, city, town: "" },
+    ];
+    for (const query of queries) {
+      const found = searchKenAllAddresses(addresses, query, 8);
+      for (const address of found) {
+        pushAddressCandidate({
+          postalCode: formatPostalCode(address.postalCode),
+          prefecture: address.prefecture,
+          city: address.city,
+          town: address.town,
+        });
+        if (merged.length >= 8) {
+          return merged;
+        }
+      }
+    }
+
+    return merged;
+  };
+
   const handleBasicAddressAiCheck = async () => {
     setBasicAddressAiError("");
     setBasicAddressAiResult(null);
@@ -2657,7 +2899,7 @@ export function DataEntryForm() {
     const postalCode = formData.postalCode.trim();
     if (!manualAddress && !postalCode) {
       setBasicAddressAiError(
-        "手入力した住所または郵便番号を入力してからAIチェックしてください。"
+        "手入力した住所または郵便番号を入力してから住所チェックしてください。"
       );
       return;
     }
@@ -2689,10 +2931,88 @@ export function DataEntryForm() {
       const message =
         error instanceof Error
           ? error.message
-          : "AIチェック中に不明なエラーが発生しました。";
+          : "住所チェック中に不明なエラーが発生しました。";
       setBasicAddressAiError(message);
     } finally {
       setIsBasicAddressAiChecking(false);
+    }
+  };
+
+  const handleResidentAddressCheck = async (section: ResidentSection) => {
+    setResidentAddressCheckErrorBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
+    setResidentAddressCheckResultBySection((prev) => ({
+      ...prev,
+      [section]: null,
+    }));
+
+    const manualAddress = buildManualResidentAddressText(residentFormData, section);
+    if (!manualAddress) {
+      setResidentAddressCheckErrorBySection((prev) => ({
+        ...prev,
+        [section]: "手入力した住所を入力してから住所チェックしてください。",
+      }));
+      return;
+    }
+
+    setResidentAddressCheckingBySection((prev) => ({
+      ...prev,
+      [section]: true,
+    }));
+    try {
+      const candidates = await collectResidentAddressReferenceCandidates(section);
+      const result = await checkAddressWithLocalInference({
+        input:
+          section === "depart"
+            ? {
+                postalCode: "",
+                prefecture: residentFormData.departPrefecture.trim(),
+                city: residentFormData.departCity.trim(),
+                town: residentFormData.departTown.trim(),
+                ooaza: residentFormData.departOoaza.trim(),
+                aza: residentFormData.departAza.trim(),
+                koaza: residentFormData.departKoaza.trim(),
+                banchi: residentFormData.departBanchi.trim(),
+                building: residentFormData.departBuilding.trim(),
+              }
+            : {
+                postalCode: "",
+                prefecture: residentFormData.registryPrefecture.trim(),
+                city: residentFormData.registryCity.trim(),
+                town: residentFormData.registryTown.trim(),
+                ooaza: residentFormData.registryOoaza.trim(),
+                aza: residentFormData.registryAza.trim(),
+                koaza: residentFormData.registryKoaza.trim(),
+                banchi: residentFormData.registryBanchi.trim(),
+                building: residentFormData.registryBuilding.trim(),
+              },
+        candidates,
+      });
+
+      setResidentAddressCheckResultBySection((prev) => ({
+        ...prev,
+        [section]: {
+          ...result,
+          checkedAddress: manualAddress,
+          referenceCandidateCount: candidates.length,
+        },
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "住所チェック中に不明なエラーが発生しました。";
+      setResidentAddressCheckErrorBySection((prev) => ({
+        ...prev,
+        [section]: message,
+      }));
+    } finally {
+      setResidentAddressCheckingBySection((prev) => ({
+        ...prev,
+        [section]: false,
+      }));
     }
   };
 
@@ -2712,6 +3032,34 @@ export function DataEntryForm() {
       town: correction.town || prev.town,
     }));
     setBasicAddressAiError("");
+  };
+
+  const handleApplyResidentAddressCorrection = (section: ResidentSection) => {
+    const correction = residentAddressCheckResultBySection[section]?.corrected;
+    if (!correction) {
+      return;
+    }
+
+    if (section === "depart") {
+      setResidentFormData((prev) => ({
+        ...prev,
+        departPrefecture: correction.prefecture || prev.departPrefecture,
+        departCity: correction.city || prev.departCity,
+        departTown: correction.town || prev.departTown,
+      }));
+    } else {
+      setResidentFormData((prev) => ({
+        ...prev,
+        registryPrefecture: correction.prefecture || prev.registryPrefecture,
+        registryCity: correction.city || prev.registryCity,
+        registryTown: correction.town || prev.registryTown,
+      }));
+    }
+
+    setResidentAddressCheckErrorBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
   };
 
   const upsertBasicEntryToList = (
@@ -3916,6 +4264,7 @@ export function DataEntryForm() {
         registryBuilding: "",
         residentAlias: "",
       });
+      resetResidentAddressCheckState();
     }
   };
 
@@ -4596,81 +4945,83 @@ export function DataEntryForm() {
                 <p className="text-xs text-gray-500">
                   補完候補は ↑/↓ で移動し、Enter で選択できます。
                 </p>
-                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold text-blue-900">
-                        AI住所チェック（手入力住所）
-                      </p>
-                      <p className="text-[11px] text-blue-700">
-                        入力中の住所をブラウザ内推論で検証し、誤り候補があれば修正案を表示します。
-                      </p>
+                {settings.isAddressCheckEnabled && (
+                  <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-blue-900">
+                          住所チェック（手入力住所）
+                        </p>
+                        <p className="text-[11px] text-blue-700">
+                          入力中の住所をブラウザ内推論で検証し、誤り候補があれば修正案を表示します。
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleBasicAddressAiCheck();
+                        }}
+                        disabled={isBasicAddressAiChecking}
+                        className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                      >
+                        {isBasicAddressAiChecking ? "住所判定中..." : "住所チェック"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleBasicAddressAiCheck();
-                      }}
-                      disabled={isBasicAddressAiChecking}
-                      className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
-                    >
-                      {isBasicAddressAiChecking ? "AI判定中..." : "AIチェック"}
-                    </button>
-                  </div>
-                  {basicAddressAiError && (
-                    <p className="mt-2 text-xs text-red-600">{basicAddressAiError}</p>
-                  )}
-                  {basicAddressAiResult && (
-                    <div className="mt-2 rounded border border-blue-100 bg-white px-2.5 py-2 text-xs text-gray-700 space-y-1">
-                      <div>
-                        判定:
-                        <span
-                          className={`ml-1 font-semibold ${
-                            basicAddressAiResult.isValidAddress
-                              ? "text-emerald-700"
-                              : "text-amber-700"
-                          }`}
-                        >
-                          {basicAddressAiResult.isValidAddress
-                            ? "実在の可能性が高い"
-                            : "誤りの可能性あり"}
-                        </span>
-                      </div>
-                      <div>理由: {basicAddressAiResult.reason}</div>
-                      <div>
-                        信頼度: {(basicAddressAiResult.confidence * 100).toFixed(0)}%
-                      </div>
-                      <div>参照候補件数: {basicAddressAiResult.referenceCandidateCount}件</div>
-                      <div className="truncate">判定対象: {basicAddressAiResult.checkedAddress}</div>
-                      {hasBasicAddressAiCorrection && (
-                        <div className="pt-1">
-                          <p>
-                            修正候補:
-                            {[
-                              basicAddressAiResult.corrected?.prefecture,
-                              basicAddressAiResult.corrected?.city,
-                              basicAddressAiResult.corrected?.town,
-                            ]
-                              .filter(Boolean)
-                              .join("") || "（住所候補なし）"}
-                            {basicAddressAiResult.corrected?.postalCode
-                              ? ` / ${formatPostalCode(
-                                  basicAddressAiResult.corrected.postalCode
-                                )}`
-                              : ""}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={handleApplyBasicAddressAiCorrection}
-                            className="mt-1 px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                    {basicAddressAiError && (
+                      <p className="mt-2 text-xs text-red-600">{basicAddressAiError}</p>
+                    )}
+                    {basicAddressAiResult && (
+                      <div className="mt-2 rounded border border-blue-100 bg-white px-2.5 py-2 text-xs text-gray-700 space-y-1">
+                        <div>
+                          判定:
+                          <span
+                            className={`ml-1 font-semibold ${
+                              basicAddressAiResult.isValidAddress
+                                ? "text-emerald-700"
+                                : "text-amber-700"
+                            }`}
                           >
-                            候補を適用
-                          </button>
+                            {basicAddressAiResult.isValidAddress
+                              ? "実在の可能性が高い"
+                              : "誤りの可能性あり"}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        <div>理由: {basicAddressAiResult.reason}</div>
+                        <div>
+                          信頼度: {(basicAddressAiResult.confidence * 100).toFixed(0)}%
+                        </div>
+                        <div>参照候補件数: {basicAddressAiResult.referenceCandidateCount}件</div>
+                        <div className="truncate">判定対象: {basicAddressAiResult.checkedAddress}</div>
+                        {hasBasicAddressAiCorrection && (
+                          <div className="pt-1">
+                            <p>
+                              修正候補:
+                              {[
+                                basicAddressAiResult.corrected?.prefecture,
+                                basicAddressAiResult.corrected?.city,
+                                basicAddressAiResult.corrected?.town,
+                              ]
+                                .filter(Boolean)
+                                .join("") || "（住所候補なし）"}
+                              {basicAddressAiResult.corrected?.postalCode
+                                ? ` / ${formatPostalCode(
+                                    basicAddressAiResult.corrected.postalCode
+                                  )}`
+                                : ""}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleApplyBasicAddressAiCorrection}
+                              className="mt-1 px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                            >
+                              候補を適用
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 3列レイアウト - 大字、字、小字 */}
                 <div className="grid grid-cols-3 gap-4">
@@ -5490,6 +5841,102 @@ export function DataEntryForm() {
                         )}
                     </div>
 
+                    {settings.isAddressCheckEnabled && (
+                      <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-blue-900">
+                              住所チェック（転出）
+                            </p>
+                            <p className="text-[11px] text-blue-700">
+                              転出住所をブラウザ内推論で検証し、誤り候補があれば修正案を表示します。
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleResidentAddressCheck("depart");
+                            }}
+                            disabled={residentAddressCheckingBySection.depart}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                          >
+                            {residentAddressCheckingBySection.depart
+                              ? "住所判定中..."
+                              : "住所チェック"}
+                          </button>
+                        </div>
+                        {residentAddressCheckErrorBySection.depart && (
+                          <p className="mt-2 text-xs text-red-600">
+                            {residentAddressCheckErrorBySection.depart}
+                          </p>
+                        )}
+                        {residentAddressCheckResultBySection.depart && (
+                          <div className="mt-2 rounded border border-blue-100 bg-white px-2.5 py-2 text-xs text-gray-700 space-y-1">
+                            <div>
+                              判定:
+                              <span
+                                className={`ml-1 font-semibold ${
+                                  residentAddressCheckResultBySection.depart.isValidAddress
+                                    ? "text-emerald-700"
+                                    : "text-amber-700"
+                                }`}
+                              >
+                                {residentAddressCheckResultBySection.depart.isValidAddress
+                                  ? "実在の可能性が高い"
+                                  : "誤りの可能性あり"}
+                              </span>
+                            </div>
+                            <div>理由: {residentAddressCheckResultBySection.depart.reason}</div>
+                            <div>
+                              信頼度:{" "}
+                              {(
+                                residentAddressCheckResultBySection.depart.confidence * 100
+                              ).toFixed(0)}
+                              %
+                            </div>
+                            <div>
+                              参照候補件数:{" "}
+                              {residentAddressCheckResultBySection.depart.referenceCandidateCount}
+                              件
+                            </div>
+                            <div className="truncate">
+                              判定対象: {residentAddressCheckResultBySection.depart.checkedAddress}
+                            </div>
+                            {hasDepartAddressCheckCorrection && (
+                              <div className="pt-1">
+                                <p>
+                                  修正候補:
+                                  {[
+                                    residentAddressCheckResultBySection.depart.corrected?.prefecture,
+                                    residentAddressCheckResultBySection.depart.corrected?.city,
+                                    residentAddressCheckResultBySection.depart.corrected?.town,
+                                  ]
+                                    .filter(Boolean)
+                                    .join("") || "（住所候補なし）"}
+                                  {residentAddressCheckResultBySection.depart.corrected
+                                    ?.postalCode
+                                    ? ` / ${formatPostalCode(
+                                        residentAddressCheckResultBySection.depart.corrected
+                                          .postalCode
+                                      )}`
+                                    : ""}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleApplyResidentAddressCorrection("depart");
+                                  }}
+                                  className="mt-1 px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                                >
+                                  候補を適用
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* 転出大字 */}
                     <div>
                       <label className="block text-sm text-gray-700 mb-1.5">
@@ -5871,6 +6318,106 @@ export function DataEntryForm() {
                           </div>
                         )}
                     </div>
+
+                    {settings.isAddressCheckEnabled && (
+                      <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-blue-900">
+                              住所チェック（本籍）
+                            </p>
+                            <p className="text-[11px] text-blue-700">
+                              本籍住所をブラウザ内推論で検証し、誤り候補があれば修正案を表示します。
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleResidentAddressCheck("registry");
+                            }}
+                            disabled={residentAddressCheckingBySection.registry}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                          >
+                            {residentAddressCheckingBySection.registry
+                              ? "住所判定中..."
+                              : "住所チェック"}
+                          </button>
+                        </div>
+                        {residentAddressCheckErrorBySection.registry && (
+                          <p className="mt-2 text-xs text-red-600">
+                            {residentAddressCheckErrorBySection.registry}
+                          </p>
+                        )}
+                        {residentAddressCheckResultBySection.registry && (
+                          <div className="mt-2 rounded border border-blue-100 bg-white px-2.5 py-2 text-xs text-gray-700 space-y-1">
+                            <div>
+                              判定:
+                              <span
+                                className={`ml-1 font-semibold ${
+                                  residentAddressCheckResultBySection.registry.isValidAddress
+                                    ? "text-emerald-700"
+                                    : "text-amber-700"
+                                }`}
+                              >
+                                {residentAddressCheckResultBySection.registry.isValidAddress
+                                  ? "実在の可能性が高い"
+                                  : "誤りの可能性あり"}
+                              </span>
+                            </div>
+                            <div>
+                              理由: {residentAddressCheckResultBySection.registry.reason}
+                            </div>
+                            <div>
+                              信頼度:{" "}
+                              {(
+                                residentAddressCheckResultBySection.registry.confidence * 100
+                              ).toFixed(0)}
+                              %
+                            </div>
+                            <div>
+                              参照候補件数:{" "}
+                              {residentAddressCheckResultBySection.registry.referenceCandidateCount}
+                              件
+                            </div>
+                            <div className="truncate">
+                              判定対象:{" "}
+                              {residentAddressCheckResultBySection.registry.checkedAddress}
+                            </div>
+                            {hasRegistryAddressCheckCorrection && (
+                              <div className="pt-1">
+                                <p>
+                                  修正候補:
+                                  {[
+                                    residentAddressCheckResultBySection.registry.corrected
+                                      ?.prefecture,
+                                    residentAddressCheckResultBySection.registry.corrected?.city,
+                                    residentAddressCheckResultBySection.registry.corrected?.town,
+                                  ]
+                                    .filter(Boolean)
+                                    .join("") || "（住所候補なし）"}
+                                  {residentAddressCheckResultBySection.registry.corrected
+                                    ?.postalCode
+                                    ? ` / ${formatPostalCode(
+                                        residentAddressCheckResultBySection.registry.corrected
+                                          .postalCode
+                                      )}`
+                                    : ""}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleApplyResidentAddressCorrection("registry");
+                                  }}
+                                  className="mt-1 px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                                >
+                                  候補を適用
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* 本籍大字 */}
                     <div>
@@ -6588,6 +7135,19 @@ export function DataEntryForm() {
                 {MIN_SHEET_WRITE_FONT_SIZE}〜{MAX_SHEET_WRITE_FONT_SIZE}
               </p>
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={settings.isAddressCheckEnabled}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isAddressCheckEnabled: e.target.checked,
+                  }))
+                }
+              />
+              住所チェックを有効化する
+            </label>
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
