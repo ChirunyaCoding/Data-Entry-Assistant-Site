@@ -67,6 +67,48 @@ interface ResidentFormData {
   residentAlias: string;
 }
 
+const DEFAULT_FORM_DATA: FormData = {
+  operator: "",
+  filename: "",
+  postalCode: "",
+  prefecture: "",
+  city: "",
+  town: "",
+  ooaza: "",
+  aza: "",
+  koaza: "",
+  banchi: "",
+  building: "",
+  company: "",
+  position: "",
+  name: "",
+  phone: "",
+  notes: "",
+};
+
+const DEFAULT_RESIDENT_FORM_DATA: ResidentFormData = {
+  residentSelfName: "",
+  departName: "",
+  departPrefecture: "",
+  departCity: "",
+  departTown: "",
+  departOoaza: "",
+  departAza: "",
+  departKoaza: "",
+  departBanchi: "",
+  departBuilding: "",
+  registryName: "",
+  registryPrefecture: "",
+  registryCity: "",
+  registryTown: "",
+  registryOoaza: "",
+  registryAza: "",
+  registryKoaza: "",
+  registryBanchi: "",
+  registryBuilding: "",
+  residentAlias: "",
+};
+
 interface SavedEntry extends FormData {
   id: number;
   savedAt: string;
@@ -235,6 +277,10 @@ const BASIC_SHEET_SELECTION_STORAGE_KEY = "data-entry-tool.basic-sheet-selection
 const LEGACY_RESIDENT_TARGET_SHEET_NAME_STORAGE_KEY =
   "data-entry-tool.resident-target-sheet-name.v1";
 const SHEET_TAB_SELECTION_STORAGE_KEY = "data-entry-tool.sheet-tab-selection.v1";
+const RELOAD_STATE_STORAGE_KEY = "data-entry-tool.reload-state.v1";
+const RELOAD_PDF_DB_NAME = "data-entry-tool.reload-cache.v1";
+const RELOAD_PDF_STORE_NAME = "pdf";
+const RELOAD_PDF_RECORD_KEY = "latest";
 const BASIC_SHEET_START_ROW = 5;
 const RESIDENT_SHEET_START_ROW = 6;
 const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
@@ -244,6 +290,145 @@ const MAX_SHEET_WRITE_FONT_SIZE = 72;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 type BasicSheetSelection = "basicPrimary" | "basicSecondary";
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
+
+interface ReloadPersistedState {
+  mode: "basic" | "resident";
+  viewMode: "pdf" | "sheet" | "kanji";
+  phoneInputMode: PhoneInputMode;
+  formData: FormData;
+  residentFormData: ResidentFormData;
+}
+
+const readStringField = (source: Record<string, unknown>, key: string): string => {
+  const value = source[key];
+  return typeof value === "string" ? value : "";
+};
+
+const normalizeFormDataFromUnknown = (value: unknown): FormData => {
+  const source = typeof value === "object" && value !== null ? value : {};
+  const record = source as Record<string, unknown>;
+  return {
+    operator: readStringField(record, "operator"),
+    filename: readStringField(record, "filename"),
+    postalCode: readStringField(record, "postalCode"),
+    prefecture: readStringField(record, "prefecture"),
+    city: readStringField(record, "city"),
+    town: readStringField(record, "town"),
+    ooaza: readStringField(record, "ooaza"),
+    aza: readStringField(record, "aza"),
+    koaza: readStringField(record, "koaza"),
+    banchi: readStringField(record, "banchi"),
+    building: readStringField(record, "building"),
+    company: readStringField(record, "company"),
+    position: readStringField(record, "position"),
+    name: readStringField(record, "name"),
+    phone: readStringField(record, "phone"),
+    notes: readStringField(record, "notes"),
+  };
+};
+
+const normalizeResidentFormDataFromUnknown = (value: unknown): ResidentFormData => {
+  const source = typeof value === "object" && value !== null ? value : {};
+  const record = source as Record<string, unknown>;
+  return {
+    residentSelfName: readStringField(record, "residentSelfName"),
+    departName: readStringField(record, "departName"),
+    departPrefecture: readStringField(record, "departPrefecture"),
+    departCity: readStringField(record, "departCity"),
+    departTown: readStringField(record, "departTown"),
+    departOoaza: readStringField(record, "departOoaza"),
+    departAza: readStringField(record, "departAza"),
+    departKoaza: readStringField(record, "departKoaza"),
+    departBanchi: readStringField(record, "departBanchi"),
+    departBuilding: readStringField(record, "departBuilding"),
+    registryName: readStringField(record, "registryName"),
+    registryPrefecture: readStringField(record, "registryPrefecture"),
+    registryCity: readStringField(record, "registryCity"),
+    registryTown: readStringField(record, "registryTown"),
+    registryOoaza: readStringField(record, "registryOoaza"),
+    registryAza: readStringField(record, "registryAza"),
+    registryKoaza: readStringField(record, "registryKoaza"),
+    registryBanchi: readStringField(record, "registryBanchi"),
+    registryBuilding: readStringField(record, "registryBuilding"),
+    residentAlias: readStringField(record, "residentAlias"),
+  };
+};
+
+const openReloadPdfDatabase = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDBが利用できません。"));
+      return;
+    }
+
+    const request = indexedDB.open(RELOAD_PDF_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(RELOAD_PDF_STORE_NAME)) {
+        database.createObjectStore(RELOAD_PDF_STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDBを開けませんでした。"));
+  });
+};
+
+const saveReloadPdfBlob = async (blob: Blob): Promise<void> => {
+  const database = await openReloadPdfDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(RELOAD_PDF_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(RELOAD_PDF_STORE_NAME);
+      store.put({ id: RELOAD_PDF_RECORD_KEY, blob });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("PDFキャッシュの保存に失敗しました。"));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error("PDFキャッシュ保存が中断されました。"));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const loadReloadPdfBlob = async (): Promise<Blob | null> => {
+  const database = await openReloadPdfDatabase();
+  try {
+    return await new Promise<Blob | null>((resolve, reject) => {
+      const transaction = database.transaction(RELOAD_PDF_STORE_NAME, "readonly");
+      const store = transaction.objectStore(RELOAD_PDF_STORE_NAME);
+      const request = store.get(RELOAD_PDF_RECORD_KEY);
+      request.onsuccess = () => {
+        const result = request.result as { id: string; blob?: unknown } | undefined;
+        resolve(result?.blob instanceof Blob ? result.blob : null);
+      };
+      request.onerror = () =>
+        reject(request.error ?? new Error("PDFキャッシュの読み込みに失敗しました。"));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error("PDFキャッシュ読み込みが中断されました。"));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const clearReloadPdfBlob = async (): Promise<void> => {
+  const database = await openReloadPdfDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(RELOAD_PDF_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(RELOAD_PDF_STORE_NAME);
+      store.delete(RELOAD_PDF_RECORD_KEY);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("PDFキャッシュ削除に失敗しました。"));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error("PDFキャッシュ削除が中断されました。"));
+    });
+  } finally {
+    database.close();
+  }
+};
 
 const BASIC_FIELD_ORDER = [
   "operator",
@@ -375,6 +560,7 @@ interface AppSettings {
   fixedFilename: string;
   writeFontSize: number;
   isAddressCheckEnabled: boolean;
+  isReloadStatePersistenceEnabled: boolean;
   isResidentSelfNameFixed: boolean;
   fixedResidentSelfName: string;
   isBasicSecondarySheetEnabled: boolean;
@@ -394,6 +580,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   fixedFilename: "",
   writeFontSize: DEFAULT_SHEET_WRITE_FONT_SIZE,
   isAddressCheckEnabled: true,
+  isReloadStatePersistenceEnabled: false,
   isResidentSelfNameFixed: false,
   fixedResidentSelfName: "",
   isBasicSecondarySheetEnabled: false,
@@ -1298,6 +1485,8 @@ export function DataEntryForm() {
   const [mode, setMode] = useState<"basic" | "resident">("basic");
   const [showNotes, setShowNotes] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSettingsHydrated, setIsSettingsHydrated] = useState(false);
+  const [isReloadStateReady, setIsReloadStateReady] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
     ...DEFAULT_APP_SETTINGS,
   });
@@ -1308,45 +1497,11 @@ export function DataEntryForm() {
   } | null>(null);
   const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
   const [formData, setFormData] = useState<FormData>({
-    operator: "",
-    filename: "",
-    postalCode: "",
-    prefecture: "",
-    city: "",
-    town: "",
-    ooaza: "",
-    aza: "",
-    koaza: "",
-    banchi: "",
-    building: "",
-    company: "",
-    position: "",
-    name: "",
-    phone: "",
-    notes: "",
+    ...DEFAULT_FORM_DATA,
   });
 
   const [residentFormData, setResidentFormData] = useState<ResidentFormData>({
-    residentSelfName: "",
-    departName: "",
-    departPrefecture: "",
-    departCity: "",
-    departTown: "",
-    departOoaza: "",
-    departAza: "",
-    departKoaza: "",
-    departBanchi: "",
-    departBuilding: "",
-    registryName: "",
-    registryPrefecture: "",
-    registryCity: "",
-    registryTown: "",
-    registryOoaza: "",
-    registryAza: "",
-    registryKoaza: "",
-    registryBanchi: "",
-    registryBuilding: "",
-    residentAlias: "",
+    ...DEFAULT_RESIDENT_FORM_DATA,
   });
 
   const [pdfFile, setPdfFile] = useState<string | null>(null);
@@ -1611,6 +1766,8 @@ export function DataEntryForm() {
   const residentFolderInputRef = useRef<HTMLInputElement>(null);
   const addressWorkerRef = useRef<Worker | null>(null);
   const currentPdfObjectUrlRef = useRef<string | null>(null);
+  const currentPdfBlobRef = useRef<Blob | null>(null);
+  const hasReloadStateRestoredRef = useRef(false);
   const requestSerialRef = useRef(0);
   const latestRequestIdRef = useRef<Record<SuggestionType, number>>({
     postal: 0,
@@ -1761,6 +1918,10 @@ export function DataEntryForm() {
           typeof parsed.isAddressCheckEnabled === "boolean"
             ? parsed.isAddressCheckEnabled
             : DEFAULT_APP_SETTINGS.isAddressCheckEnabled,
+        isReloadStatePersistenceEnabled:
+          typeof parsed.isReloadStatePersistenceEnabled === "boolean"
+            ? parsed.isReloadStatePersistenceEnabled
+            : DEFAULT_APP_SETTINGS.isReloadStatePersistenceEnabled,
         isResidentSelfNameFixed: Boolean(parsed.isResidentSelfNameFixed),
         fixedResidentSelfName:
           typeof parsed.fixedResidentSelfName === "string"
@@ -1802,11 +1963,134 @@ export function DataEntryForm() {
     } catch {
       // 設定の復元に失敗した場合は既定値を使う
     }
+    setIsSettingsHydrated(true);
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    if (!isSettingsHydrated || hasReloadStateRestoredRef.current) {
+      return;
+    }
+    hasReloadStateRestoredRef.current = true;
+    if (!settings.isReloadStatePersistenceEnabled) {
+      setIsReloadStateReady(true);
+      return;
+    }
+
+    try {
+      const saved = window.localStorage.getItem(RELOAD_STATE_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<ReloadPersistedState>;
+        setMode(parsed.mode === "resident" ? "resident" : "basic");
+        setViewMode(
+          parsed.viewMode === "sheet" || parsed.viewMode === "kanji"
+            ? parsed.viewMode
+            : "pdf"
+        );
+        setPhoneInputMode(parsed.phoneInputMode === "landline" ? "landline" : "mobile");
+        const normalizedFormData = normalizeFormDataFromUnknown(parsed.formData);
+        setFormData({
+          ...normalizedFormData,
+          operator: settings.isOperatorFixed
+            ? settings.fixedOperatorName
+            : normalizedFormData.operator,
+          filename: settings.isFilenameFixed ? settings.fixedFilename : normalizedFormData.filename,
+        });
+        const normalizedResidentFormData = normalizeResidentFormDataFromUnknown(
+          parsed.residentFormData
+        );
+        setResidentFormData({
+          ...normalizedResidentFormData,
+          residentSelfName: settings.isResidentSelfNameFixed
+            ? settings.fixedResidentSelfName
+            : normalizedResidentFormData.residentSelfName,
+        });
+      }
+    } catch {
+      // 保存状態の復元に失敗した場合は既定値を使う
+    }
+
+    void (async () => {
+      try {
+        const blob = await loadReloadPdfBlob();
+        if (!blob) {
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        if (currentPdfObjectUrlRef.current) {
+          URL.revokeObjectURL(currentPdfObjectUrlRef.current);
+        }
+        currentPdfObjectUrlRef.current = url;
+        currentPdfBlobRef.current = blob;
+        setPdfFile(url);
+      } catch {
+        // PDFキャッシュ復元失敗は無視
+      }
+    })();
+    setIsReloadStateReady(true);
+  }, [isSettingsHydrated, settings.isReloadStatePersistenceEnabled]);
+
+  useEffect(() => {
+    if (
+      !isSettingsHydrated ||
+      !isReloadStateReady ||
+      !settings.isReloadStatePersistenceEnabled
+    ) {
+      return;
+    }
+
+    const persistedState: ReloadPersistedState = {
+      mode,
+      viewMode,
+      phoneInputMode,
+      formData,
+      residentFormData,
+    };
+
+    try {
+      window.localStorage.setItem(RELOAD_STATE_STORAGE_KEY, JSON.stringify(persistedState));
+    } catch {
+      // 保存失敗時はメモリ上の状態を継続
+    }
+  }, [
+    isSettingsHydrated,
+    isReloadStateReady,
+    settings.isReloadStatePersistenceEnabled,
+    mode,
+    viewMode,
+    phoneInputMode,
+    formData,
+    residentFormData,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isSettingsHydrated ||
+      !settings.isReloadStatePersistenceEnabled ||
+      !pdfFile ||
+      !currentPdfBlobRef.current
+    ) {
+      return;
+    }
+
+    void saveReloadPdfBlob(currentPdfBlobRef.current).catch(() => undefined);
+  }, [isSettingsHydrated, settings.isReloadStatePersistenceEnabled, pdfFile]);
+
+  useEffect(() => {
+    if (!isSettingsHydrated || settings.isReloadStatePersistenceEnabled) {
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem(RELOAD_STATE_STORAGE_KEY);
+    } catch {
+      // 失敗時は無視
+    }
+    void clearReloadPdfBlob().catch(() => undefined);
+  }, [isSettingsHydrated, settings.isReloadStatePersistenceEnabled]);
 
   const handleImportSettingsFromEnvFile = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -2661,6 +2945,7 @@ export function DataEntryForm() {
       URL.revokeObjectURL(currentPdfObjectUrlRef.current);
     }
     currentPdfObjectUrlRef.current = url;
+    currentPdfBlobRef.current = file;
     setPdfFile(url);
   };
 
@@ -4226,49 +4511,18 @@ export function DataEntryForm() {
   const handleClear = () => {
     if (mode === "basic") {
       setFormData({
-        operator: settings.isOperatorFixed ? settings.fixedOperatorName : "",
-        filename: settings.isFilenameFixed ? settings.fixedFilename : "",
-        postalCode: "",
-        prefecture: "",
-        city: "",
-        town: "",
-        ooaza: "",
-        aza: "",
-        koaza: "",
-        banchi: "",
-        building: "",
-        company: "",
-        position: "",
-        name: "",
-        phone: "",
-        notes: "",
+        ...DEFAULT_FORM_DATA,
+        operator: settings.isOperatorFixed ? settings.fixedOperatorName : DEFAULT_FORM_DATA.operator,
+        filename: settings.isFilenameFixed ? settings.fixedFilename : DEFAULT_FORM_DATA.filename,
       });
       setBasicAddressAiError("");
       setBasicAddressAiResult(null);
     } else {
       setResidentFormData({
+        ...DEFAULT_RESIDENT_FORM_DATA,
         residentSelfName: settings.isResidentSelfNameFixed
           ? settings.fixedResidentSelfName
-          : "",
-        departName: "",
-        departPrefecture: "",
-        departCity: "",
-        departTown: "",
-        departOoaza: "",
-        departAza: "",
-        departKoaza: "",
-        departBanchi: "",
-        departBuilding: "",
-        registryName: "",
-        registryPrefecture: "",
-        registryCity: "",
-        registryTown: "",
-        registryOoaza: "",
-        registryAza: "",
-        registryKoaza: "",
-        registryBanchi: "",
-        registryBuilding: "",
-        residentAlias: "",
+          : DEFAULT_RESIDENT_FORM_DATA.residentSelfName,
       });
       resetResidentAddressCheckState();
     }
@@ -7241,6 +7495,19 @@ export function DataEntryForm() {
                 }
               />
               住所チェックを有効化する
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={settings.isReloadStatePersistenceEnabled}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    isReloadStatePersistenceEnabled: e.target.checked,
+                  }))
+                }
+              />
+              リロード後も入力データとPDF表示を保持する
             </label>
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
