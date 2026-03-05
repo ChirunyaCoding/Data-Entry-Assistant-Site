@@ -271,6 +271,9 @@ const ENV_RESIDENT_PRIMARY_SHEET_URL = (
 const ENV_RESIDENT_SECONDARY_SHEET_URL = (
   import.meta.env.VITE_RESIDENT_SECONDARY_SHEET_URL ?? ""
 ).trim();
+const ENV_GOOGLE_MAPS_EMBED_API_KEY = (
+  import.meta.env.VITE_GOOGLE_MAPS_EMBED_API_KEY ?? ""
+).trim();
 const RESIDENT_SHEET_SELECTION_STORAGE_KEY =
   "data-entry-tool.resident-sheet-selection.v1";
 const BASIC_SHEET_SELECTION_STORAGE_KEY = "data-entry-tool.basic-sheet-selection.v1";
@@ -1307,8 +1310,10 @@ const buildManualResidentAddressText = (
     .join("");
 };
 
-const buildGoogleMapsSearchUrl = (address: string): string => {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+const buildGoogleMapsEmbedSearchUrl = (address: string, apiKey: string): string => {
+  const query = encodeURIComponent(address);
+  const key = encodeURIComponent(apiKey);
+  return `https://www.google.com/maps/embed/v1/search?key=${key}&q=${query}&language=ja&region=JP`;
 };
 
 const isPdfFile = (file: File): boolean => {
@@ -1627,6 +1632,7 @@ export function DataEntryForm() {
   const [basicAddressAiResult, setBasicAddressAiResult] =
     useState<AddressCheckViewResult | null>(null);
   const [basicMapSearchError, setBasicMapSearchError] = useState("");
+  const [basicMapEmbedUrl, setBasicMapEmbedUrl] = useState("");
   const [residentAddressCheckErrorBySection, setResidentAddressCheckErrorBySection] =
     useState<Record<ResidentSection, string>>({
       depart: "",
@@ -1643,6 +1649,12 @@ export function DataEntryForm() {
       registry: false,
     });
   const [residentMapSearchErrorBySection, setResidentMapSearchErrorBySection] = useState<
+    Record<ResidentSection, string>
+  >({
+    depart: "",
+    registry: "",
+  });
+  const [residentMapEmbedUrlBySection, setResidentMapEmbedUrlBySection] = useState<
     Record<ResidentSection, string>
   >({
     depart: "",
@@ -2557,6 +2569,7 @@ export function DataEntryForm() {
     if (BASIC_ADDRESS_FIELDS_FOR_AI_CHECK.has(name)) {
       resetBasicAddressAiCheckState();
       setBasicMapSearchError("");
+      setBasicMapEmbedUrl("");
     }
 
     if (name === "postalCode") {
@@ -2968,6 +2981,10 @@ export function DataEntryForm() {
           ...prev,
           [residentSection]: "",
         }));
+        setResidentMapEmbedUrlBySection((prev) => ({
+          ...prev,
+          [residentSection]: "",
+        }));
       }
     }
 
@@ -3353,27 +3370,23 @@ export function DataEntryForm() {
 
   const handleOpenBasicAddressInGoogleMaps = () => {
     setBasicMapSearchError("");
+    setBasicMapEmbedUrl("");
     const manualAddress = buildManualBasicAddressText(formData);
     if (!manualAddress) {
-      setBasicMapSearchError("住所を入力してからGoogle Maps検索してください。");
+      setBasicMapSearchError("住所を入力してから地図表示してください。");
       return;
     }
 
-    if (typeof window === "undefined") {
-      setBasicMapSearchError("この環境ではGoogle Maps検索を開けません。");
-      return;
-    }
-
-    const opened = window.open(
-      buildGoogleMapsSearchUrl(manualAddress),
-      "_blank",
-      "noopener,noreferrer"
-    );
-    if (!opened) {
+    if (!ENV_GOOGLE_MAPS_EMBED_API_KEY) {
       setBasicMapSearchError(
-        "Google Mapsを開けませんでした。ブラウザのポップアップ設定を確認してください。"
+        "VITE_GOOGLE_MAPS_EMBED_API_KEY が未設定です。.env にGoogle Maps Embed APIキーを設定してください。"
       );
+      return;
     }
+
+    setBasicMapEmbedUrl(
+      buildGoogleMapsEmbedSearchUrl(manualAddress, ENV_GOOGLE_MAPS_EMBED_API_KEY)
+    );
   };
 
   const handleResidentAddressCheck = async (section: ResidentSection) => {
@@ -3459,36 +3472,36 @@ export function DataEntryForm() {
       ...prev,
       [section]: "",
     }));
+    setResidentMapEmbedUrlBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
 
     const manualAddress = buildManualResidentAddressText(residentFormData, section);
     if (!manualAddress) {
       setResidentMapSearchErrorBySection((prev) => ({
         ...prev,
-        [section]: "住所を入力してからGoogle Maps検索してください。",
+        [section]: "住所を入力してから地図表示してください。",
       }));
       return;
     }
 
-    if (typeof window === "undefined") {
-      setResidentMapSearchErrorBySection((prev) => ({
-        ...prev,
-        [section]: "この環境ではGoogle Maps検索を開けません。",
-      }));
-      return;
-    }
-
-    const opened = window.open(
-      buildGoogleMapsSearchUrl(manualAddress),
-      "_blank",
-      "noopener,noreferrer"
-    );
-    if (!opened) {
+    if (!ENV_GOOGLE_MAPS_EMBED_API_KEY) {
       setResidentMapSearchErrorBySection((prev) => ({
         ...prev,
         [section]:
-          "Google Mapsを開けませんでした。ブラウザのポップアップ設定を確認してください。",
+          "VITE_GOOGLE_MAPS_EMBED_API_KEY が未設定です。.env にGoogle Maps Embed APIキーを設定してください。",
       }));
+      return;
     }
+
+    setResidentMapEmbedUrlBySection((prev) => ({
+      ...prev,
+      [section]: buildGoogleMapsEmbedSearchUrl(
+        manualAddress,
+        ENV_GOOGLE_MAPS_EMBED_API_KEY
+      ),
+    }));
   };
 
   const handleApplyBasicAddressAiCorrection = () => {
@@ -4702,6 +4715,7 @@ export function DataEntryForm() {
       setBasicAddressAiError("");
       setBasicAddressAiResult(null);
       setBasicMapSearchError("");
+      setBasicMapEmbedUrl("");
     } else {
       setResidentFormData({
         ...DEFAULT_RESIDENT_FORM_DATA,
@@ -4711,6 +4725,10 @@ export function DataEntryForm() {
       });
       resetResidentAddressCheckState();
       setResidentMapSearchErrorBySection({
+        depart: "",
+        registry: "",
+      });
+      setResidentMapEmbedUrlBySection({
         depart: "",
         registry: "",
       });
@@ -5441,18 +5459,29 @@ export function DataEntryForm() {
                 <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-emerald-900">
-                      入力中の住所を Google Maps で確認できます。
+                      入力中の住所を Google Maps で埋め込み表示できます。
                     </p>
                     <button
                       type="button"
                       onClick={handleOpenBasicAddressInGoogleMaps}
                       className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
                     >
-                      Google Mapsで検索
+                      地図表示
                     </button>
                   </div>
                   {basicMapSearchError && (
                     <p className="mt-2 text-xs text-red-600">{basicMapSearchError}</p>
+                  )}
+                  {basicMapEmbedUrl && (
+                    <div className="mt-2 overflow-hidden rounded border border-emerald-200 bg-white">
+                      <iframe
+                        title="基本モード住所の地図"
+                        src={basicMapEmbedUrl}
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                        className="h-64 w-full border-0"
+                      />
+                    </div>
                   )}
                 </div>
                 {settings.isAddressCheckEnabled && (
@@ -6398,7 +6427,7 @@ export function DataEntryForm() {
                     <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs text-emerald-900">
-                          転出住所を Google Maps で確認できます。
+                          転出住所を Google Maps で埋め込み表示できます。
                         </p>
                         <button
                           type="button"
@@ -6407,7 +6436,7 @@ export function DataEntryForm() {
                           }}
                           className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
                         >
-                          Google Mapsで検索
+                          地図表示
                         </button>
                       </div>
                       {residentMapSearchErrorBySection.depart && (
@@ -6415,12 +6444,23 @@ export function DataEntryForm() {
                           {residentMapSearchErrorBySection.depart}
                         </p>
                       )}
+                      {residentMapEmbedUrlBySection.depart && (
+                        <div className="mt-2 overflow-hidden rounded border border-emerald-200 bg-white">
+                          <iframe
+                            title="住民票モード転出住所の地図"
+                            src={residentMapEmbedUrlBySection.depart}
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                            className="h-64 w-full border-0"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs text-emerald-900">
-                          本籍住所を Google Maps で確認できます。
+                          本籍住所を Google Maps で埋め込み表示できます。
                         </p>
                         <button
                           type="button"
@@ -6429,13 +6469,24 @@ export function DataEntryForm() {
                           }}
                           className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
                         >
-                          Google Mapsで検索
+                          地図表示
                         </button>
                       </div>
                       {residentMapSearchErrorBySection.registry && (
                         <p className="mt-2 text-xs text-red-600">
                           {residentMapSearchErrorBySection.registry}
                         </p>
+                      )}
+                      {residentMapEmbedUrlBySection.registry && (
+                        <div className="mt-2 overflow-hidden rounded border border-emerald-200 bg-white">
+                          <iframe
+                            title="住民票モード本籍住所の地図"
+                            src={residentMapEmbedUrlBySection.registry}
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                            className="h-64 w-full border-0"
+                          />
+                        </div>
                       )}
                     </div>
 
