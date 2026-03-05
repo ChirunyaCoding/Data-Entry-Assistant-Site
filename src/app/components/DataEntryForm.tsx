@@ -3870,11 +3870,6 @@ export function DataEntryForm() {
   };
 
   const handleClear = () => {
-    setEditingBasicEntryId(null);
-    setEditingResidentEntryId(null);
-    setBasicListWritingEntryId(null);
-    setResidentListWritingEntryId(null);
-
     if (mode === "basic") {
       setFormData({
         operator: settings.isOperatorFixed ? settings.fixedOperatorName : "",
@@ -3899,7 +3894,6 @@ export function DataEntryForm() {
         currentPdfObjectUrlRef.current = null;
       }
       setPdfFile(null);
-      setPhoneInputMode("mobile");
       setBasicAddressAiError("");
       setBasicAddressAiResult(null);
     } else {
@@ -3927,10 +3921,6 @@ export function DataEntryForm() {
         registryBuilding: "",
         residentAlias: "",
       });
-      setResidentSecondaryEntries([]);
-      setResidentSecondaryWritingEntryId(null);
-      setResidentSheetSyncError("");
-      setResidentSheetSyncSuccess("");
     }
   };
 
