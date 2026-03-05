@@ -1320,6 +1320,59 @@ const buildGoogleMapsEmbedSearchUrl = (address: string, apiKey: string): string 
   return `https://www.google.com/maps/embed/v1/search?key=${key}&q=${query}&language=ja&region=JP`;
 };
 
+const GOOGLE_GEOCODE_ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json";
+
+interface GoogleGeocodeApiResponse {
+  status?: string;
+  error_message?: string;
+  results?: Array<{
+    formatted_address?: string;
+  }>;
+}
+
+const fetchGoogleFormattedAddress = async (
+  inputAddress: string,
+  apiKey: string
+): Promise<string> => {
+  const requestUrl =
+    `${GOOGLE_GEOCODE_ENDPOINT}?address=${encodeURIComponent(inputAddress)}` +
+    `&key=${encodeURIComponent(apiKey)}&language=ja&region=jp`;
+  const response = await fetch(requestUrl);
+  if (!response.ok) {
+    throw new Error(`Google住所検索に失敗しました（HTTP ${response.status}）。`);
+  }
+
+  const payload = (await response.json()) as GoogleGeocodeApiResponse;
+  const status = String(payload.status ?? "").trim().toUpperCase();
+  const errorMessage = String(payload.error_message ?? "").trim();
+
+  if (status !== "OK") {
+    if (status === "ZERO_RESULTS") {
+      throw new Error("Googleで該当住所が見つかりませんでした。");
+    }
+    if (status === "REQUEST_DENIED") {
+      throw new Error(
+        `Google住所検索が拒否されました。Geocoding APIの有効化とAPIキー制限を確認してください。${
+          errorMessage ? ` (${errorMessage})` : ""
+        }`
+      );
+    }
+    if (status === "OVER_QUERY_LIMIT") {
+      throw new Error("Google住所検索の上限に達しました。時間をおいて再試行してください。");
+    }
+    throw new Error(
+      `Google住所検索に失敗しました。${status}${errorMessage ? ` (${errorMessage})` : ""}`
+    );
+  }
+
+  const formattedAddress = String(payload.results?.[0]?.formatted_address ?? "").trim();
+  if (!formattedAddress) {
+    throw new Error("Google検索結果の住所を取得できませんでした。");
+  }
+
+  return formattedAddress;
+};
+
 const isPdfFile = (file: File): boolean => {
   const normalizedName = file.name.toLowerCase();
   return file.type === "application/pdf" || normalizedName.endsWith(".pdf");
@@ -1639,6 +1692,7 @@ export function DataEntryForm() {
   const [basicMapEmbedUrl, setBasicMapEmbedUrl] = useState("");
   const [basicMapDisplayedAddress, setBasicMapDisplayedAddress] = useState("");
   const [isBasicMapLoaded, setIsBasicMapLoaded] = useState(false);
+  const [isBasicMapResolving, setIsBasicMapResolving] = useState(false);
   const [residentAddressCheckErrorBySection, setResidentAddressCheckErrorBySection] =
     useState<Record<ResidentSection, string>>({
       depart: "",
@@ -1672,6 +1726,12 @@ export function DataEntryForm() {
       registry: "",
     });
   const [residentMapLoadedBySection, setResidentMapLoadedBySection] = useState<
+    Record<ResidentSection, boolean>
+  >({
+    depart: false,
+    registry: false,
+  });
+  const [residentMapResolvingBySection, setResidentMapResolvingBySection] = useState<
     Record<ResidentSection, boolean>
   >({
     depart: false,
@@ -2593,6 +2653,7 @@ export function DataEntryForm() {
       setBasicMapEmbedUrl("");
       setBasicMapDisplayedAddress("");
       setIsBasicMapLoaded(false);
+      setIsBasicMapResolving(false);
     }
 
     if (name === "postalCode") {
@@ -3016,6 +3077,10 @@ export function DataEntryForm() {
           ...prev,
           [residentSection]: false,
         }));
+        setResidentMapResolvingBySection((prev) => ({
+          ...prev,
+          [residentSection]: false,
+        }));
       }
     }
 
@@ -3399,11 +3464,12 @@ export function DataEntryForm() {
     }
   };
 
-  const handleOpenBasicAddressInGoogleMaps = () => {
+  const handleOpenBasicAddressInGoogleMaps = async () => {
     setBasicMapSearchError("");
     setBasicMapEmbedUrl("");
     setBasicMapDisplayedAddress("");
     setIsBasicMapLoaded(false);
+    setIsBasicMapResolving(false);
     const manualAddress = buildManualBasicAddressText(formData);
     if (!manualAddress) {
       setBasicMapSearchError("住所を入力してから地図表示してください。");
@@ -3418,8 +3484,18 @@ export function DataEntryForm() {
       return;
     }
 
-    setBasicMapDisplayedAddress(manualAddress);
-    setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey));
+    setIsBasicMapResolving(true);
+    try {
+      const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
+      setBasicMapDisplayedAddress(resolvedAddress);
+      setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(resolvedAddress, apiKey));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Google住所検索中に不明なエラーが発生しました。";
+      setBasicMapSearchError(message);
+    } finally {
+      setIsBasicMapResolving(false);
+    }
   };
 
   const handleResidentAddressCheck = async (section: ResidentSection) => {
@@ -3500,7 +3576,7 @@ export function DataEntryForm() {
     }
   };
 
-  const handleOpenResidentAddressInGoogleMaps = (section: ResidentSection) => {
+  const handleOpenResidentAddressInGoogleMaps = async (section: ResidentSection) => {
     setResidentMapSearchErrorBySection((prev) => ({
       ...prev,
       [section]: "",
@@ -3514,6 +3590,10 @@ export function DataEntryForm() {
       [section]: "",
     }));
     setResidentMapLoadedBySection((prev) => ({
+      ...prev,
+      [section]: false,
+    }));
+    setResidentMapResolvingBySection((prev) => ({
       ...prev,
       [section]: false,
     }));
@@ -3537,14 +3617,33 @@ export function DataEntryForm() {
       return;
     }
 
-    setResidentMapEmbedUrlBySection((prev) => ({
+    setResidentMapResolvingBySection((prev) => ({
       ...prev,
-      [section]: buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey),
+      [section]: true,
     }));
-    setResidentMapDisplayedAddressBySection((prev) => ({
-      ...prev,
-      [section]: manualAddress,
-    }));
+    try {
+      const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
+      setResidentMapDisplayedAddressBySection((prev) => ({
+        ...prev,
+        [section]: resolvedAddress,
+      }));
+      setResidentMapEmbedUrlBySection((prev) => ({
+        ...prev,
+        [section]: buildGoogleMapsEmbedSearchUrl(resolvedAddress, apiKey),
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Google住所検索中に不明なエラーが発生しました。";
+      setResidentMapSearchErrorBySection((prev) => ({
+        ...prev,
+        [section]: message,
+      }));
+    } finally {
+      setResidentMapResolvingBySection((prev) => ({
+        ...prev,
+        [section]: false,
+      }));
+    }
   };
 
   const handleApplyBasicAddressAiCorrection = () => {
@@ -4761,6 +4860,7 @@ export function DataEntryForm() {
       setBasicMapEmbedUrl("");
       setBasicMapDisplayedAddress("");
       setIsBasicMapLoaded(false);
+      setIsBasicMapResolving(false);
     } else {
       setResidentFormData({
         ...DEFAULT_RESIDENT_FORM_DATA,
@@ -4782,6 +4882,10 @@ export function DataEntryForm() {
         registry: "",
       });
       setResidentMapLoadedBySection({
+        depart: false,
+        registry: false,
+      });
+      setResidentMapResolvingBySection({
         depart: false,
         registry: false,
       });
@@ -5516,10 +5620,13 @@ export function DataEntryForm() {
                     </p>
                     <button
                       type="button"
-                      onClick={handleOpenBasicAddressInGoogleMaps}
-                      className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                      onClick={() => {
+                        void handleOpenBasicAddressInGoogleMaps();
+                      }}
+                      disabled={isBasicMapResolving}
+                      className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
                     >
-                      地図表示
+                      {isBasicMapResolving ? "地図検索中..." : "地図表示"}
                     </button>
                   </div>
                   {basicMapSearchError && (
@@ -6493,11 +6600,12 @@ export function DataEntryForm() {
                         <button
                           type="button"
                           onClick={() => {
-                            handleOpenResidentAddressInGoogleMaps("depart");
+                            void handleOpenResidentAddressInGoogleMaps("depart");
                           }}
-                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                          disabled={residentMapResolvingBySection.depart}
+                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
                         >
-                          地図表示
+                          {residentMapResolvingBySection.depart ? "地図検索中..." : "地図表示"}
                         </button>
                       </div>
                       {residentMapSearchErrorBySection.depart && (
@@ -6538,11 +6646,14 @@ export function DataEntryForm() {
                         <button
                           type="button"
                           onClick={() => {
-                            handleOpenResidentAddressInGoogleMaps("registry");
+                            void handleOpenResidentAddressInGoogleMaps("registry");
                           }}
-                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700"
+                          disabled={residentMapResolvingBySection.registry}
+                          className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
                         >
-                          地図表示
+                          {residentMapResolvingBySection.registry
+                            ? "地図検索中..."
+                            : "地図表示"}
                         </button>
                       </div>
                       {residentMapSearchErrorBySection.registry && (
