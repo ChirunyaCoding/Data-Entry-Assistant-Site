@@ -667,6 +667,7 @@ interface AppSettings {
   basicSecondarySheetUrl: string;
   residentPrimarySheetUrl: string;
   residentSecondarySheetUrl: string;
+  googleMapsEmbedApiKey: string;
 }
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -687,6 +688,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   basicSecondarySheetUrl: ENV_BASIC_SECONDARY_SHEET_URL,
   residentPrimarySheetUrl: ENV_RESIDENT_PRIMARY_SHEET_URL,
   residentSecondarySheetUrl: ENV_RESIDENT_SECONDARY_SHEET_URL,
+  googleMapsEmbedApiKey: ENV_GOOGLE_MAPS_EMBED_API_KEY,
 };
 
 type AppSettingsUrlField =
@@ -695,7 +697,8 @@ type AppSettingsUrlField =
   | "basicSheetUrl"
   | "basicSecondarySheetUrl"
   | "residentPrimarySheetUrl"
-  | "residentSecondarySheetUrl";
+  | "residentSecondarySheetUrl"
+  | "googleMapsEmbedApiKey";
 
 const ENV_URL_KEY_TO_SETTING_FIELD: Record<string, AppSettingsUrlField> = {
   VITE_BASIC_SHEET_WEBHOOK_URL: "basicSheetWebhookUrl",
@@ -704,6 +707,7 @@ const ENV_URL_KEY_TO_SETTING_FIELD: Record<string, AppSettingsUrlField> = {
   VITE_BASIC_SECONDARY_SHEET_URL: "basicSecondarySheetUrl",
   VITE_RESIDENT_PRIMARY_SHEET_URL: "residentPrimarySheetUrl",
   VITE_RESIDENT_SECONDARY_SHEET_URL: "residentSecondarySheetUrl",
+  VITE_GOOGLE_MAPS_EMBED_API_KEY: "googleMapsEmbedApiKey",
 };
 
 const parseDotEnvUrlSettings = (
@@ -2075,6 +2079,10 @@ export function DataEntryForm() {
           typeof parsed.residentSecondarySheetUrl === "string"
             ? parsed.residentSecondarySheetUrl
             : DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
+        googleMapsEmbedApiKey:
+          typeof parsed.googleMapsEmbedApiKey === "string"
+            ? parsed.googleMapsEmbedApiKey
+            : DEFAULT_APP_SETTINGS.googleMapsEmbedApiKey,
       });
     } catch {
       // 設定の復元に失敗した場合は既定値を使う
@@ -3377,16 +3385,15 @@ export function DataEntryForm() {
       return;
     }
 
-    if (!ENV_GOOGLE_MAPS_EMBED_API_KEY) {
+    const apiKey = settings.googleMapsEmbedApiKey.trim();
+    if (!apiKey) {
       setBasicMapSearchError(
-        "VITE_GOOGLE_MAPS_EMBED_API_KEY が未設定です。.env にGoogle Maps Embed APIキーを設定してください。"
+        "Google Maps Embed APIキーが未設定です。設定の「シート/Webhook設定（詳細）」で入力してください。"
       );
       return;
     }
 
-    setBasicMapEmbedUrl(
-      buildGoogleMapsEmbedSearchUrl(manualAddress, ENV_GOOGLE_MAPS_EMBED_API_KEY)
-    );
+    setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey));
   };
 
   const handleResidentAddressCheck = async (section: ResidentSection) => {
@@ -3486,21 +3493,19 @@ export function DataEntryForm() {
       return;
     }
 
-    if (!ENV_GOOGLE_MAPS_EMBED_API_KEY) {
+    const apiKey = settings.googleMapsEmbedApiKey.trim();
+    if (!apiKey) {
       setResidentMapSearchErrorBySection((prev) => ({
         ...prev,
         [section]:
-          "VITE_GOOGLE_MAPS_EMBED_API_KEY が未設定です。.env にGoogle Maps Embed APIキーを設定してください。",
+          "Google Maps Embed APIキーが未設定です。設定の「シート/Webhook設定（詳細）」で入力してください。",
       }));
       return;
     }
 
     setResidentMapEmbedUrlBySection((prev) => ({
       ...prev,
-      [section]: buildGoogleMapsEmbedSearchUrl(
-        manualAddress,
-        ENV_GOOGLE_MAPS_EMBED_API_KEY
-      ),
+      [section]: buildGoogleMapsEmbedSearchUrl(manualAddress, apiKey),
     }));
   };
 
@@ -7889,6 +7894,8 @@ export function DataEntryForm() {
                             DEFAULT_APP_SETTINGS.residentPrimarySheetUrl,
                           residentSecondarySheetUrl:
                             DEFAULT_APP_SETTINGS.residentSecondarySheetUrl,
+                          googleMapsEmbedApiKey:
+                            DEFAULT_APP_SETTINGS.googleMapsEmbedApiKey,
                         }));
                         setSettingsEnvImportMessage(null);
                       }}
@@ -8026,6 +8033,24 @@ export function DataEntryForm() {
                     }
                     className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="VITE_RESIDENT_SECONDARY_SHEET_URL"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    Google Maps Embed APIキー
+                  </label>
+                  <input
+                    type="password"
+                    value={settings.googleMapsEmbedApiKey}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        googleMapsEmbedApiKey: e.target.value,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="VITE_GOOGLE_MAPS_EMBED_API_KEY"
+                    autoComplete="off"
                   />
                 </div>
               </div>
