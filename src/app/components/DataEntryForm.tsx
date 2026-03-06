@@ -293,12 +293,22 @@ const MAX_SHEET_WRITE_FONT_SIZE = 72;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 type BasicSheetSelection = "basicPrimary" | "basicSecondary";
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
+type BasicWriteSkipFieldName = "postalCode" | "prefecture" | "city" | "town";
+type BasicWriteSkipFields = Record<BasicWriteSkipFieldName, boolean>;
+
+const DEFAULT_BASIC_WRITE_SKIP_FIELDS: BasicWriteSkipFields = {
+  postalCode: false,
+  prefecture: false,
+  city: false,
+  town: false,
+};
 
 interface ReloadPersistedState {
   mode: "basic" | "resident";
   viewMode: "pdf" | "sheet" | "kanji";
   phoneInputMode: PhoneInputMode;
   formData: FormData;
+  basicWriteSkipFields: BasicWriteSkipFields;
   residentFormData: ResidentFormData;
   savedEntries: SavedEntry[];
   savedResidentEntries: SavedResidentEntry[];
@@ -308,6 +318,17 @@ interface ReloadPersistedState {
 const readStringField = (source: Record<string, unknown>, key: string): string => {
   const value = source[key];
   return typeof value === "string" ? value : "";
+};
+
+const normalizeBasicWriteSkipFieldsFromUnknown = (value: unknown): BasicWriteSkipFields => {
+  const source = typeof value === "object" && value !== null ? value : {};
+  const record = source as Record<string, unknown>;
+  return {
+    postalCode: record.postalCode === true,
+    prefecture: record.prefecture === true,
+    city: record.city === true,
+    town: record.town === true,
+  };
 };
 
 const normalizeFormDataFromUnknown = (value: unknown): FormData => {
@@ -807,6 +828,10 @@ const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
   const digits = rawValue.replace(/[^\d]/g, "").slice(0, 11);
   if (!digits) {
     return "";
+  }
+
+  if (mode === "mobile" && (digits === "09" || digits === "08" || digits === "07")) {
+    return `${digits}0`;
   }
 
   if (digits.startsWith("0289")) {
@@ -1658,6 +1683,9 @@ export function DataEntryForm() {
   const [formData, setFormData] = useState<FormData>({
     ...DEFAULT_FORM_DATA,
   });
+  const [basicWriteSkipFields, setBasicWriteSkipFields] = useState<BasicWriteSkipFields>({
+    ...DEFAULT_BASIC_WRITE_SKIP_FIELDS,
+  });
 
   const [residentFormData, setResidentFormData] = useState<ResidentFormData>({
     ...DEFAULT_RESIDENT_FORM_DATA,
@@ -2196,6 +2224,9 @@ export function DataEntryForm() {
             : normalizedFormData.operator,
           filename: settings.isFilenameFixed ? settings.fixedFilename : normalizedFormData.filename,
         });
+        setBasicWriteSkipFields(
+          normalizeBasicWriteSkipFieldsFromUnknown(parsed.basicWriteSkipFields)
+        );
         const normalizedResidentFormData = normalizeResidentFormDataFromUnknown(
           parsed.residentFormData
         );
@@ -2251,6 +2282,7 @@ export function DataEntryForm() {
       viewMode,
       phoneInputMode,
       formData,
+      basicWriteSkipFields,
       residentFormData,
       savedEntries,
       savedResidentEntries,
@@ -2270,6 +2302,7 @@ export function DataEntryForm() {
     viewMode,
     phoneInputMode,
     formData,
+    basicWriteSkipFields,
     residentFormData,
     savedEntries,
     savedResidentEntries,
@@ -2640,6 +2673,16 @@ export function DataEntryForm() {
     setResidentAddressCheckResultBySection((prev) => ({
       ...prev,
       [section]: null,
+    }));
+  };
+
+  const handleBasicWriteSkipFieldToggle = (
+    fieldName: BasicWriteSkipFieldName,
+    checked: boolean
+  ) => {
+    setBasicWriteSkipFields((prev) => ({
+      ...prev,
+      [fieldName]: checked,
     }));
   };
 
@@ -3835,10 +3878,11 @@ export function DataEntryForm() {
       preferExistingRow?: boolean;
     }
   ): BasicSheetWritePayload => {
+    const postalCodeForWrite = basicWriteSkipFields.postalCode ? "" : basicEntry.postalCode;
     const integratedAddress = joinBasicAddressForSheet([
-      basicEntry.prefecture,
-      basicEntry.city,
-      basicEntry.town,
+      basicWriteSkipFields.prefecture ? "" : basicEntry.prefecture,
+      basicWriteSkipFields.city ? "" : basicEntry.city,
+      basicWriteSkipFields.town ? "" : basicEntry.town,
       basicEntry.ooaza,
       basicEntry.aza,
       basicEntry.koaza,
@@ -3855,10 +3899,10 @@ export function DataEntryForm() {
       values: {
         A: basicEntry.operator,
         B: basicEntry.filename,
-        C: isSecondaryMapping ? basicEntry.position : basicEntry.postalCode,
+        C: isSecondaryMapping ? basicEntry.position : postalCodeForWrite,
         D: isSecondaryMapping ? basicEntry.name : integratedAddress,
         E: isSecondaryMapping ? basicEntry.company : basicEntry.building,
-        F: isSecondaryMapping ? basicEntry.postalCode : basicEntry.company,
+        F: isSecondaryMapping ? postalCodeForWrite : basicEntry.company,
         G: isSecondaryMapping ? integratedAddress : basicEntry.position,
         H: isSecondaryMapping ? basicEntry.building : basicEntry.name,
         I: basicEntry.phone,
@@ -5318,9 +5362,22 @@ export function DataEntryForm() {
                     handleSuggestionAreaBlur(e, setIsPostalSuggestionVisible, "postal")
                   }
                 >
-                  <label className="block text-sm text-gray-700 mb-1.5">
-                    郵便番号
-                  </label>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <label className="block text-sm text-gray-700">
+                      郵便番号
+                    </label>
+                    <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={basicWriteSkipFields.postalCode}
+                        onChange={(e) =>
+                          handleBasicWriteSkipFieldToggle("postalCode", e.target.checked)
+                        }
+                        className="h-3.5 w-3.5"
+                      />
+                      書込除外
+                    </label>
+                  </div>
                   <input
                     type="text"
                     name="postalCode"
@@ -5401,9 +5458,22 @@ export function DataEntryForm() {
                       )
                     }
                   >
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      都道府県
-                    </label>
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <label className="block text-sm text-gray-700">
+                        都道府県
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                        <input
+                          type="checkbox"
+                          checked={basicWriteSkipFields.prefecture}
+                          onChange={(e) =>
+                            handleBasicWriteSkipFieldToggle("prefecture", e.target.checked)
+                          }
+                          className="h-3.5 w-3.5"
+                        />
+                        書込除外
+                      </label>
+                    </div>
                     <input
                       type="text"
                       name="prefecture"
@@ -5470,9 +5540,22 @@ export function DataEntryForm() {
                       handleSuggestionAreaBlur(e, setIsCitySuggestionVisible, "city")
                     }
                   >
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      市区町村
-                    </label>
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <label className="block text-sm text-gray-700">
+                        市区町村
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                        <input
+                          type="checkbox"
+                          checked={basicWriteSkipFields.city}
+                          onChange={(e) =>
+                            handleBasicWriteSkipFieldToggle("city", e.target.checked)
+                          }
+                          className="h-3.5 w-3.5"
+                        />
+                        書込除外
+                      </label>
+                    </div>
                     <input
                       type="text"
                       name="city"
@@ -5545,9 +5628,22 @@ export function DataEntryForm() {
                       handleSuggestionAreaBlur(e, setIsTownSuggestionVisible, "town")
                     }
                   >
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      町域
-                    </label>
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <label className="block text-sm text-gray-700">
+                        町域
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                        <input
+                          type="checkbox"
+                          checked={basicWriteSkipFields.town}
+                          onChange={(e) =>
+                            handleBasicWriteSkipFieldToggle("town", e.target.checked)
+                          }
+                          className="h-3.5 w-3.5"
+                        />
+                        書込除外
+                      </label>
+                    </div>
                     <input
                       type="text"
                       name="town"
