@@ -5597,16 +5597,16 @@ export function DataEntryForm() {
                 </button>
               </div>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <p className="text-2xl tracking-widest tabular-nums text-amber-950">
-                {formatPomodoroTime(pomodoroSecondsRemaining)}
-              </p>
-              <p className="text-xs text-amber-800">
-                完了セット: {completedPomodoroFocusSessions}
-              </p>
-            </div>
             {!isPomodoroCollapsed && (
               <>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="text-2xl tracking-widest tabular-nums text-amber-950">
+                    {formatPomodoroTime(pomodoroSecondsRemaining)}
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    完了セット: {completedPomodoroFocusSessions}
+                  </p>
+                </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -5669,27 +5669,6 @@ export function DataEntryForm() {
                   </label>
                 </div>
               </>
-            )}
-            {isPomodoroCollapsed && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={handlePomodoroToggle}
-                  className="px-3 py-1.5 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 flex items-center gap-1"
-                >
-                  {isPomodoroRunning ? (
-                    <>
-                      <Pause className="w-3.5 h-3.5" />
-                      一時停止
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" />
-                      開始
-                    </>
-                  )}
-                </button>
-              </div>
             )}
           </div>
 
