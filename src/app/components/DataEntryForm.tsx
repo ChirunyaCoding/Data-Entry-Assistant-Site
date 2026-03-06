@@ -320,6 +320,7 @@ interface PomodoroPersistedState {
   breakMinutes: number;
   isRunning: boolean;
   completedFocusSessions: number;
+  isCollapsed: boolean;
 }
 
 interface ReloadPersistedState {
@@ -421,6 +422,7 @@ const normalizePomodoroPersistedStateFromUnknown = (
     breakMinutes,
     isRunning: record.isRunning === true,
     completedFocusSessions,
+    isCollapsed: record.isCollapsed === true,
   };
 };
 
@@ -1786,6 +1788,7 @@ export function DataEntryForm() {
     ...DEFAULT_APP_SETTINGS,
   });
   const settingsEnvFileInputRef = useRef<HTMLInputElement | null>(null);
+  const pomodoroAudioContextRef = useRef<AudioContext | null>(null);
   const [settingsEnvImportMessage, setSettingsEnvImportMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -1810,6 +1813,7 @@ export function DataEntryForm() {
   const [isPomodoroRunning, setIsPomodoroRunning] = useState(false);
   const [completedPomodoroFocusSessions, setCompletedPomodoroFocusSessions] =
     useState(0);
+  const [isPomodoroCollapsed, setIsPomodoroCollapsed] = useState(false);
 
   const [residentFormData, setResidentFormData] = useState<ResidentFormData>({
     ...DEFAULT_RESIDENT_FORM_DATA,
@@ -2358,6 +2362,7 @@ export function DataEntryForm() {
         setPomodoroSecondsRemaining(normalizedPomodoro.secondsRemaining);
         setIsPomodoroRunning(normalizedPomodoro.isRunning);
         setCompletedPomodoroFocusSessions(normalizedPomodoro.completedFocusSessions);
+        setIsPomodoroCollapsed(normalizedPomodoro.isCollapsed);
         const normalizedResidentFormData = normalizeResidentFormDataFromUnknown(
           parsed.residentFormData
         );
@@ -2421,6 +2426,7 @@ export function DataEntryForm() {
         breakMinutes: pomodoroBreakMinutes,
         isRunning: isPomodoroRunning,
         completedFocusSessions: completedPomodoroFocusSessions,
+        isCollapsed: isPomodoroCollapsed,
       },
       residentFormData,
       savedEntries,
@@ -2448,6 +2454,7 @@ export function DataEntryForm() {
     pomodoroSecondsRemaining,
     isPomodoroRunning,
     completedPomodoroFocusSessions,
+    isPomodoroCollapsed,
     residentFormData,
     savedEntries,
     savedResidentEntries,
@@ -2830,6 +2837,56 @@ export function DataEntryForm() {
     return `${minutesPart}:${secondsPart}`;
   };
 
+  const playPomodoroAlarm = async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      if (!pomodoroAudioContextRef.current) {
+        const AudioContextClass = window.AudioContext;
+        if (!AudioContextClass) {
+          return;
+        }
+        pomodoroAudioContextRef.current = new AudioContextClass();
+      }
+
+      const context = pomodoroAudioContextRef.current;
+      if (context.state === "suspended") {
+        await context.resume();
+      }
+
+      const startTime = context.currentTime + 0.02;
+      const tones: Array<{ offset: number; frequency: number; duration: number }> = [
+        { offset: 0, frequency: 880, duration: 0.16 },
+        { offset: 0.2, frequency: 988, duration: 0.16 },
+        { offset: 0.4, frequency: 1318, duration: 0.22 },
+      ];
+
+      for (const tone of tones) {
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(tone.frequency, startTime + tone.offset);
+        gainNode.gain.setValueAtTime(0.0001, startTime + tone.offset);
+        gainNode.gain.exponentialRampToValueAtTime(
+          0.18,
+          startTime + tone.offset + 0.02
+        );
+        gainNode.gain.exponentialRampToValueAtTime(
+          0.0001,
+          startTime + tone.offset + tone.duration
+        );
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        oscillator.start(startTime + tone.offset);
+        oscillator.stop(startTime + tone.offset + tone.duration + 0.04);
+      }
+    } catch {
+      // 通知音再生失敗はUI動作を継続
+    }
+  };
+
   const handlePomodoroToggle = () => {
     setIsPomodoroRunning((prev) => !prev);
   };
@@ -2883,6 +2940,8 @@ export function DataEntryForm() {
       return;
     }
 
+    void playPomodoroAlarm();
+
     if (pomodoroPhase === "focus") {
       setCompletedPomodoroFocusSessions((prev) => prev + 1);
     }
@@ -2908,6 +2967,17 @@ export function DataEntryForm() {
       getPomodoroDurationSeconds(pomodoroPhase, pomodoroFocusMinutes, pomodoroBreakMinutes)
     );
   }, [isPomodoroRunning, pomodoroPhase, pomodoroFocusMinutes, pomodoroBreakMinutes]);
+
+  useEffect(() => {
+    return () => {
+      const context = pomodoroAudioContextRef.current;
+      pomodoroAudioContextRef.current = null;
+      if (!context) {
+        return;
+      }
+      void context.close().catch(() => undefined);
+    };
+  }, []);
 
   const handleBasicWriteSkipFieldToggle = (
     fieldName: BasicWriteSkipFieldName,
@@ -5494,26 +5564,114 @@ export function DataEntryForm() {
                 <Timer className="w-4 h-4 text-amber-700" />
                 <p className="text-sm font-semibold text-amber-900">ポモドーロタイマー</p>
               </div>
-              <span
-                className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${
-                  pomodoroPhase === "focus"
-                    ? "bg-amber-200 text-amber-900"
-                    : "bg-emerald-200 text-emerald-900"
-                }`}
-              >
-                {pomodoroPhase === "focus" ? "作業時間" : "休憩時間"}
-              </span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-3xl tracking-widest tabular-nums text-amber-950">
-                  {formatPomodoroTime(pomodoroSecondsRemaining)}
-                </p>
-                <p className="text-xs text-amber-800">
-                  完了セット: {completedPomodoroFocusSessions}
-                </p>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${
+                    pomodoroPhase === "focus"
+                      ? "bg-amber-200 text-amber-900"
+                      : "bg-emerald-200 text-emerald-900"
+                  }`}
+                >
+                  {pomodoroPhase === "focus" ? "作業時間" : "休憩時間"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPomodoroCollapsed((prev) => !prev);
+                  }}
+                  className="px-2 py-1 rounded bg-white border border-amber-300 text-amber-900 text-xs hover:bg-amber-100 flex items-center gap-1"
+                  aria-expanded={!isPomodoroCollapsed}
+                  aria-label={isPomodoroCollapsed ? "ポモドーロを展開" : "ポモドーロを折り畳み"}
+                >
+                  {isPomodoroCollapsed ? (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      展開
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp className="w-3.5 h-3.5" />
+                      折り畳み
+                    </>
+                  )}
+                </button>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <p className="text-2xl tracking-widest tabular-nums text-amber-950">
+                {formatPomodoroTime(pomodoroSecondsRemaining)}
+              </p>
+              <p className="text-xs text-amber-800">
+                完了セット: {completedPomodoroFocusSessions}
+              </p>
+            </div>
+            {!isPomodoroCollapsed && (
+              <>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePomodoroToggle}
+                      className="px-3 py-1.5 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 flex items-center gap-1"
+                    >
+                      {isPomodoroRunning ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5" />
+                          一時停止
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" />
+                          開始
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePomodoroSkipPhase}
+                      className="px-3 py-1.5 rounded bg-sky-600 text-white text-xs hover:bg-sky-700 flex items-center gap-1"
+                    >
+                      <SkipForward className="w-3.5 h-3.5" />
+                      フェーズ切替
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePomodoroReset}
+                      className="px-3 py-1.5 rounded bg-gray-600 text-white text-xs hover:bg-gray-700 flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      リセット
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <label className="text-xs text-amber-900">
+                    作業(分)
+                    <input
+                      type="number"
+                      min={MIN_POMODORO_MINUTES}
+                      max={MAX_POMODORO_MINUTES}
+                      value={pomodoroFocusMinutes}
+                      onChange={(e) => handlePomodoroFocusMinutesChange(e.target.value)}
+                      className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </label>
+                  <label className="text-xs text-amber-900">
+                    休憩(分)
+                    <input
+                      type="number"
+                      min={MIN_POMODORO_MINUTES}
+                      max={MAX_POMODORO_MINUTES}
+                      value={pomodoroBreakMinutes}
+                      onChange={(e) => handlePomodoroBreakMinutesChange(e.target.value)}
+                      className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+            {isPomodoroCollapsed && (
+              <div className="mt-3">
                 <button
                   type="button"
                   onClick={handlePomodoroToggle}
@@ -5531,48 +5689,8 @@ export function DataEntryForm() {
                     </>
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={handlePomodoroSkipPhase}
-                  className="px-3 py-1.5 rounded bg-sky-600 text-white text-xs hover:bg-sky-700 flex items-center gap-1"
-                >
-                  <SkipForward className="w-3.5 h-3.5" />
-                  フェーズ切替
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePomodoroReset}
-                  className="px-3 py-1.5 rounded bg-gray-600 text-white text-xs hover:bg-gray-700 flex items-center gap-1"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  リセット
-                </button>
               </div>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <label className="text-xs text-amber-900">
-                作業(分)
-                <input
-                  type="number"
-                  min={MIN_POMODORO_MINUTES}
-                  max={MAX_POMODORO_MINUTES}
-                  value={pomodoroFocusMinutes}
-                  onChange={(e) => handlePomodoroFocusMinutesChange(e.target.value)}
-                  className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </label>
-              <label className="text-xs text-amber-900">
-                休憩(分)
-                <input
-                  type="number"
-                  min={MIN_POMODORO_MINUTES}
-                  max={MAX_POMODORO_MINUTES}
-                  value={pomodoroBreakMinutes}
-                  onChange={(e) => handlePomodoroBreakMinutesChange(e.target.value)}
-                  className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </label>
-            </div>
+            )}
           </div>
 
           {mode === "basic" ? (
