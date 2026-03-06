@@ -152,6 +152,10 @@ const joinWithFullWidthSpace = (parts: string[]) => {
   return parts.filter(Boolean).join(FULL_WIDTH_SPACE);
 };
 
+const toFullWidthSpace = (value: string): string => {
+  return value.replace(/ /g, FULL_WIDTH_SPACE);
+};
+
 const moveArrayItem = <T,>(items: T[], fromIndex: number, toIndex: number): T[] => {
   if (
     fromIndex === toIndex ||
@@ -1456,6 +1460,35 @@ const buildGoogleMapsEmbedSearchUrl = (address: string, apiKey: string): string 
   const query = encodeURIComponent(address);
   const key = encodeURIComponent(apiKey);
   return `https://www.google.com/maps/embed/v1/search?key=${key}&q=${query}&language=ja&region=JP`;
+};
+
+const normalizeAddressForComparison = (address: string): string => {
+  return address
+    .normalize("NFKC")
+    .replace(/[－ー―ｰ]/g, "-")
+    .replace(/\s+/g, "");
+};
+
+const extractLikelyBanchiToken = (address: string): string => {
+  const normalized = normalizeAddressForComparison(address);
+  const matches = normalized.match(/\d+(?:-\d+)*/g);
+  if (!matches || matches.length === 0) {
+    return "";
+  }
+  return matches[matches.length - 1] ?? "";
+};
+
+const resolveGoogleMapSearchQuery = (
+  manualAddress: string,
+  googleFormattedAddress: string
+): string => {
+  const normalizedManual = normalizeAddressForComparison(manualAddress);
+  const normalizedGoogle = normalizeAddressForComparison(googleFormattedAddress);
+  const banchiToken = extractLikelyBanchiToken(normalizedManual);
+  if (banchiToken && !normalizedGoogle.includes(banchiToken)) {
+    return manualAddress;
+  }
+  return googleFormattedAddress;
 };
 
 const GOOGLE_GEOCODE_ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json";
@@ -3047,6 +3080,14 @@ export function DataEntryForm() {
       return;
     }
 
+    if (name === "name") {
+      setFormData((prev) => ({
+        ...prev,
+        name: toFullWidthSpace(value),
+      }));
+      return;
+    }
+
     if (name === "ooaza" || name === "aza" || name === "koaza") {
       setFormData((prev) => ({
         ...prev,
@@ -3836,8 +3877,9 @@ export function DataEntryForm() {
     setIsBasicMapResolving(true);
     try {
       const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
+      const mapSearchQuery = resolveGoogleMapSearchQuery(manualAddress, resolvedAddress);
       setBasicMapDisplayedAddress(resolvedAddress);
-      setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(resolvedAddress, apiKey));
+      setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(mapSearchQuery, apiKey));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Google住所検索中に不明なエラーが発生しました。";
@@ -3972,13 +4014,14 @@ export function DataEntryForm() {
     }));
     try {
       const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
+      const mapSearchQuery = resolveGoogleMapSearchQuery(manualAddress, resolvedAddress);
       setResidentMapDisplayedAddressBySection((prev) => ({
         ...prev,
         [section]: resolvedAddress,
       }));
       setResidentMapEmbedUrlBySection((prev) => ({
         ...prev,
-        [section]: buildGoogleMapsEmbedSearchUrl(resolvedAddress, apiKey),
+        [section]: buildGoogleMapsEmbedSearchUrl(mapSearchQuery, apiKey),
       }));
     } catch (error) {
       const message =
