@@ -331,6 +331,7 @@ interface ReloadPersistedState {
   mode: "basic" | "resident";
   viewMode: "pdf" | "sheet" | "kanji";
   phoneInputMode: PhoneInputMode;
+  isPhoneThreeThreeFourFormatEnabled: boolean;
   formData: FormData;
   basicWriteSkipFields: BasicWriteSkipFields;
   pomodoro: PomodoroPersistedState;
@@ -343,6 +344,10 @@ interface ReloadPersistedState {
 const readStringField = (source: Record<string, unknown>, key: string): string => {
   const value = source[key];
   return typeof value === "string" ? value : "";
+};
+
+const readBooleanField = (source: Record<string, unknown>, key: string): boolean => {
+  return source[key] === true;
 };
 
 const normalizeBasicWriteSkipFieldsFromUnknown = (value: unknown): BasicWriteSkipFields => {
@@ -941,10 +946,18 @@ const splitByPattern = (digits: string, blocks: number[]): string => {
   return parts.join("-");
 };
 
-const formatPhoneNumber = (rawValue: string, mode: PhoneInputMode): string => {
+const formatPhoneNumber = (
+  rawValue: string,
+  mode: PhoneInputMode,
+  forceThreeThreeFour = false
+): string => {
   const digits = rawValue.replace(/[^\d]/g, "").slice(0, 11);
   if (!digits) {
     return "";
+  }
+
+  if (forceThreeThreeFour) {
+    return splitByPattern(digits, [3, 3, 4]);
   }
 
   if (mode === "mobile" && (digits === "09" || digits === "08" || digits === "07")) {
@@ -1860,6 +1873,8 @@ export function DataEntryForm() {
     text: string;
   } | null>(null);
   const [phoneInputMode, setPhoneInputMode] = useState<PhoneInputMode>("mobile");
+  const [isPhoneThreeThreeFourFormatEnabled, setIsPhoneThreeThreeFourFormatEnabled] =
+    useState(false);
   const [formData, setFormData] = useState<FormData>({
     ...DEFAULT_FORM_DATA,
   });
@@ -2417,6 +2432,9 @@ export function DataEntryForm() {
             : "pdf"
         );
         setPhoneInputMode(parsed.phoneInputMode === "landline" ? "landline" : "mobile");
+        setIsPhoneThreeThreeFourFormatEnabled(
+          readBooleanField(parsed as Record<string, unknown>, "isPhoneThreeThreeFourFormatEnabled")
+        );
         const normalizedFormData = normalizeFormDataFromUnknown(parsed.formData);
         setFormData({
           ...normalizedFormData,
@@ -2490,6 +2508,7 @@ export function DataEntryForm() {
       mode,
       viewMode,
       phoneInputMode,
+      isPhoneThreeThreeFourFormatEnabled,
       formData,
       basicWriteSkipFields,
       pomodoro: {
@@ -2519,6 +2538,7 @@ export function DataEntryForm() {
     mode,
     viewMode,
     phoneInputMode,
+    isPhoneThreeThreeFourFormatEnabled,
     formData,
     basicWriteSkipFields,
     pomodoroPhase,
@@ -2763,11 +2783,15 @@ export function DataEntryForm() {
   }, [settings.isAddressCheckEnabled]);
 
   useEffect(() => {
-    setFormData((prev) => ({
-      ...prev,
-      phone: formatPhoneNumber(prev.phone, phoneInputMode),
-    }));
-  }, [phoneInputMode]);
+      setFormData((prev) => ({
+        ...prev,
+        phone: formatPhoneNumber(
+          prev.phone,
+          phoneInputMode,
+          isPhoneThreeThreeFourFormatEnabled
+        ),
+      }));
+  }, [phoneInputMode, isPhoneThreeThreeFourFormatEnabled]);
 
   const requestWorker = (type: SuggestionType, payload: WorkerQueryRequest) => {
     const worker = addressWorkerRef.current;
@@ -3089,7 +3113,11 @@ export function DataEntryForm() {
     if (name === "phone") {
       setFormData((prev) => ({
         ...prev,
-        phone: formatPhoneNumber(value, phoneInputMode),
+        phone: formatPhoneNumber(
+          value,
+          phoneInputMode,
+          isPhoneThreeThreeFourFormatEnabled
+        ),
       }));
       return;
     }
@@ -6446,9 +6474,22 @@ export function DataEntryForm() {
 
                 {isBasicSecondarySheetMode ? (
                   <div>
-                    <label className="block text-sm text-gray-700 mb-1.5">
-                      電話番号
-                    </label>
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <label className="block text-sm text-gray-700">
+                        電話番号
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                        <input
+                          type="checkbox"
+                          checked={isPhoneThreeThreeFourFormatEnabled}
+                          onChange={(e) => {
+                            setIsPhoneThreeThreeFourFormatEnabled(e.target.checked);
+                          }}
+                          className="h-3.5 w-3.5"
+                        />
+                        3-3-4
+                      </label>
+                    </div>
                     <input
                       type="tel"
                       name="phone"
@@ -6476,7 +6517,8 @@ export function DataEntryForm() {
                           ...prev,
                           phone: formatPhoneNumber(
                             `${prev.phone}${mappedDigit}`,
-                            "landline"
+                            "landline",
+                            isPhoneThreeThreeFourFormatEnabled
                           ),
                         }));
                       }}
@@ -6484,7 +6526,7 @@ export function DataEntryForm() {
                       placeholder="000-0000-0000"
                     />
                     <p className="mt-1 text-xs text-gray-500">
-                      通常: 携帯番号 / Shift押下: 固定電話形式
+                      通常: 携帯番号 / Shift押下: 固定電話形式 / チェック: 3-3-4形式
                     </p>
                   </div>
                 ) : (
@@ -6536,9 +6578,22 @@ export function DataEntryForm() {
 
                     {/* 電話番号 */}
                     <div>
-                      <label className="block text-sm text-gray-700 mb-1.5">
-                        電話番号
-                      </label>
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <label className="block text-sm text-gray-700">
+                          電話番号
+                        </label>
+                        <label className="inline-flex items-center gap-1 text-xs text-gray-600 select-none">
+                          <input
+                            type="checkbox"
+                            checked={isPhoneThreeThreeFourFormatEnabled}
+                            onChange={(e) => {
+                              setIsPhoneThreeThreeFourFormatEnabled(e.target.checked);
+                            }}
+                            className="h-3.5 w-3.5"
+                          />
+                          3-3-4
+                        </label>
+                      </div>
                       <input
                         type="tel"
                         name="phone"
@@ -6566,7 +6621,8 @@ export function DataEntryForm() {
                             ...prev,
                             phone: formatPhoneNumber(
                               `${prev.phone}${mappedDigit}`,
-                              "landline"
+                              "landline",
+                              isPhoneThreeThreeFourFormatEnabled
                             ),
                           }));
                         }}
@@ -6574,7 +6630,7 @@ export function DataEntryForm() {
                         placeholder="000-0000-0000"
                       />
                       <p className="mt-1 text-xs text-gray-500">
-                        通常: 携帯番号 / Shift押下: 固定電話形式
+                        通常: 携帯番号 / Shift押下: 固定電話形式 / チェック: 3-3-4形式
                       </p>
                     </div>
                   </div>
