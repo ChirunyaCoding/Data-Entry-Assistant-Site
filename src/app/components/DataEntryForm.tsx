@@ -565,6 +565,24 @@ const BASIC_FIELD_ORDER = [
   "phone",
   "notes",
 ] as const;
+const BASIC_SECONDARY_NAVIGATION_FIELD_ORDER = [
+  "operator",
+  "filename",
+  "position",
+  "name",
+  "company",
+  "postalCode",
+  "prefecture",
+  "city",
+  "town",
+  "ooaza",
+  "aza",
+  "koaza",
+  "banchi",
+  "building",
+  "phone",
+  "notes",
+] as const;
 
 const DETAIL_ADDRESS_FIELDS = new Set<string>(["ooaza", "aza", "koaza"]);
 const BASIC_ADDRESS_FIELDS_FOR_AI_CHECK = new Set<string>([
@@ -2851,11 +2869,14 @@ export function DataEntryForm() {
       return focusByFieldName(residentFormRef, nextResidentField);
     }
 
+    const basicFieldOrderForNavigation = isBasicSecondarySheetMode
+      ? BASIC_SECONDARY_NAVIGATION_FIELD_ORDER
+      : BASIC_FIELD_ORDER;
     const nextBasicField = findNextFieldNameFromOrder(
       currentName,
       direction,
       includeDetailFields,
-      BASIC_FIELD_ORDER,
+      basicFieldOrderForNavigation,
       DETAIL_ADDRESS_FIELDS
     );
     if (!nextBasicField) {
