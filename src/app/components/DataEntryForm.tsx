@@ -1421,6 +1421,13 @@ const buildManualBasicAddressText = (formData: FormData): string => {
     .join("");
 };
 
+const buildBasicMapSearchInput = (formData: FormData): string => {
+  const postalCode = formatPostalCode(formData.postalCode);
+  const addressBody = buildManualBasicAddressText(formData);
+  const postalPrefix = postalCode.replace(/[^\d]/g, "").length === 7 ? `〒${postalCode}` : "";
+  return [postalPrefix, addressBody].filter(Boolean).join(" ");
+};
+
 const buildManualResidentAddressText = (
   formData: ResidentFormData,
   section: ResidentSection
@@ -1489,6 +1496,17 @@ const resolveGoogleMapSearchQuery = (
     return manualAddress;
   }
   return googleFormattedAddress;
+};
+
+const isBanchiOmittedFromAddress = (
+  referenceAddress: string,
+  comparedAddress: string
+): boolean => {
+  const referenceToken = extractLikelyBanchiToken(referenceAddress);
+  if (!referenceToken) {
+    return false;
+  }
+  return !normalizeAddressForComparison(comparedAddress).includes(referenceToken);
 };
 
 const GOOGLE_GEOCODE_ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json";
@@ -3889,6 +3907,7 @@ export function DataEntryForm() {
     setIsBasicMapLoaded(false);
     setIsBasicMapResolving(false);
     const manualAddress = buildManualBasicAddressText(formData);
+    const mapSearchInput = buildBasicMapSearchInput(formData);
     if (!manualAddress) {
       setBasicMapSearchError("住所を入力してから地図表示してください。");
       return;
@@ -3904,8 +3923,8 @@ export function DataEntryForm() {
 
     setIsBasicMapResolving(true);
     try {
-      const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
-      const resolvedMapSearch = resolveGoogleMapSearch(manualAddress, resolvedAddress);
+      const resolvedAddress = await fetchGoogleFormattedAddress(mapSearchInput, apiKey);
+      const resolvedMapSearch = resolveGoogleMapSearch(mapSearchInput, resolvedAddress);
       setBasicMapSearchQuery(resolvedMapSearch.query);
       setBasicMapDisplayedAddress(resolvedMapSearch.formattedAddress);
       setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(resolvedMapSearch.query, apiKey));
@@ -6256,7 +6275,13 @@ export function DataEntryForm() {
                     basicMapDisplayedAddress &&
                     basicMapDisplayedAddress !== basicMapSearchQuery && (
                       <p className="mt-1 text-[11px] text-emerald-800 break-all">
-                        Google整形住所: {basicMapDisplayedAddress}
+                        {isBanchiOmittedFromAddress(
+                          basicMapSearchQuery,
+                          basicMapDisplayedAddress
+                        )
+                          ? "Google整形住所（番地省略）: "
+                          : "Google整形住所: "}
+                        {basicMapDisplayedAddress}
                       </p>
                     )}
                 </div>
@@ -7249,7 +7274,13 @@ export function DataEntryForm() {
                         residentMapDisplayedAddressBySection.depart !==
                           residentMapSearchQueryBySection.depart && (
                           <p className="mt-1 text-[11px] text-emerald-800 break-all">
-                            Google整形住所: {residentMapDisplayedAddressBySection.depart}
+                            {isBanchiOmittedFromAddress(
+                              residentMapSearchQueryBySection.depart,
+                              residentMapDisplayedAddressBySection.depart
+                            )
+                              ? "Google整形住所（番地省略）: "
+                              : "Google整形住所: "}
+                            {residentMapDisplayedAddressBySection.depart}
                           </p>
                         )}
                     </div>
@@ -7305,7 +7336,13 @@ export function DataEntryForm() {
                         residentMapDisplayedAddressBySection.registry !==
                           residentMapSearchQueryBySection.registry && (
                           <p className="mt-1 text-[11px] text-emerald-800 break-all">
-                            Google整形住所: {residentMapDisplayedAddressBySection.registry}
+                            {isBanchiOmittedFromAddress(
+                              residentMapSearchQueryBySection.registry,
+                              residentMapDisplayedAddressBySection.registry
+                            )
+                              ? "Google整形住所（番地省略）: "
+                              : "Google整形住所: "}
+                            {residentMapDisplayedAddressBySection.registry}
                           </p>
                         )}
                     </div>
