@@ -1501,6 +1501,11 @@ interface GoogleGeocodeApiResponse {
   }>;
 }
 
+interface ResolvedGoogleMapSearch {
+  query: string;
+  formattedAddress: string;
+}
+
 const fetchGoogleFormattedAddress = async (
   inputAddress: string,
   apiKey: string
@@ -1542,6 +1547,16 @@ const fetchGoogleFormattedAddress = async (
   }
 
   return formattedAddress;
+};
+
+const resolveGoogleMapSearch = (
+  manualAddress: string,
+  googleFormattedAddress: string
+): ResolvedGoogleMapSearch => {
+  return {
+    query: resolveGoogleMapSearchQuery(manualAddress, googleFormattedAddress),
+    formattedAddress: googleFormattedAddress,
+  };
 };
 
 const isPdfFile = (file: File): boolean => {
@@ -1879,6 +1894,7 @@ export function DataEntryForm() {
     useState<AddressCheckViewResult | null>(null);
   const [basicMapSearchError, setBasicMapSearchError] = useState("");
   const [basicMapEmbedUrl, setBasicMapEmbedUrl] = useState("");
+  const [basicMapSearchQuery, setBasicMapSearchQuery] = useState("");
   const [basicMapDisplayedAddress, setBasicMapDisplayedAddress] = useState("");
   const [isBasicMapLoaded, setIsBasicMapLoaded] = useState(false);
   const [isBasicMapResolving, setIsBasicMapResolving] = useState(false);
@@ -1904,6 +1920,12 @@ export function DataEntryForm() {
     registry: "",
   });
   const [residentMapEmbedUrlBySection, setResidentMapEmbedUrlBySection] = useState<
+    Record<ResidentSection, string>
+  >({
+    depart: "",
+    registry: "",
+  });
+  const [residentMapSearchQueryBySection, setResidentMapSearchQueryBySection] = useState<
     Record<ResidentSection, string>
   >({
     depart: "",
@@ -3030,6 +3052,7 @@ export function DataEntryForm() {
       resetBasicAddressAiCheckState();
       setBasicMapSearchError("");
       setBasicMapEmbedUrl("");
+      setBasicMapSearchQuery("");
       setBasicMapDisplayedAddress("");
       setIsBasicMapLoaded(false);
       setIsBasicMapResolving(false);
@@ -3459,6 +3482,10 @@ export function DataEntryForm() {
           ...prev,
           [residentSection]: "",
         }));
+        setResidentMapSearchQueryBySection((prev) => ({
+          ...prev,
+          [residentSection]: "",
+        }));
         setResidentMapDisplayedAddressBySection((prev) => ({
           ...prev,
           [residentSection]: "",
@@ -3857,6 +3884,7 @@ export function DataEntryForm() {
   const handleOpenBasicAddressInGoogleMaps = async () => {
     setBasicMapSearchError("");
     setBasicMapEmbedUrl("");
+    setBasicMapSearchQuery("");
     setBasicMapDisplayedAddress("");
     setIsBasicMapLoaded(false);
     setIsBasicMapResolving(false);
@@ -3877,9 +3905,10 @@ export function DataEntryForm() {
     setIsBasicMapResolving(true);
     try {
       const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
-      const mapSearchQuery = resolveGoogleMapSearchQuery(manualAddress, resolvedAddress);
-      setBasicMapDisplayedAddress(resolvedAddress);
-      setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(mapSearchQuery, apiKey));
+      const resolvedMapSearch = resolveGoogleMapSearch(manualAddress, resolvedAddress);
+      setBasicMapSearchQuery(resolvedMapSearch.query);
+      setBasicMapDisplayedAddress(resolvedMapSearch.formattedAddress);
+      setBasicMapEmbedUrl(buildGoogleMapsEmbedSearchUrl(resolvedMapSearch.query, apiKey));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Google住所検索中に不明なエラーが発生しました。";
@@ -3976,6 +4005,10 @@ export function DataEntryForm() {
       ...prev,
       [section]: "",
     }));
+    setResidentMapSearchQueryBySection((prev) => ({
+      ...prev,
+      [section]: "",
+    }));
     setResidentMapDisplayedAddressBySection((prev) => ({
       ...prev,
       [section]: "",
@@ -4014,14 +4047,18 @@ export function DataEntryForm() {
     }));
     try {
       const resolvedAddress = await fetchGoogleFormattedAddress(manualAddress, apiKey);
-      const mapSearchQuery = resolveGoogleMapSearchQuery(manualAddress, resolvedAddress);
+      const resolvedMapSearch = resolveGoogleMapSearch(manualAddress, resolvedAddress);
+      setResidentMapSearchQueryBySection((prev) => ({
+        ...prev,
+        [section]: resolvedMapSearch.query,
+      }));
       setResidentMapDisplayedAddressBySection((prev) => ({
         ...prev,
-        [section]: resolvedAddress,
+        [section]: resolvedMapSearch.formattedAddress,
       }));
       setResidentMapEmbedUrlBySection((prev) => ({
         ...prev,
-        [section]: buildGoogleMapsEmbedSearchUrl(mapSearchQuery, apiKey),
+        [section]: buildGoogleMapsEmbedSearchUrl(resolvedMapSearch.query, apiKey),
       }));
     } catch (error) {
       const message =
@@ -5251,6 +5288,7 @@ export function DataEntryForm() {
       setBasicAddressAiResult(null);
       setBasicMapSearchError("");
       setBasicMapEmbedUrl("");
+      setBasicMapSearchQuery("");
       setBasicMapDisplayedAddress("");
       setIsBasicMapLoaded(false);
       setIsBasicMapResolving(false);
@@ -5267,6 +5305,10 @@ export function DataEntryForm() {
         registry: "",
       });
       setResidentMapEmbedUrlBySection({
+        depart: "",
+        registry: "",
+      });
+      setResidentMapSearchQueryBySection({
         depart: "",
         registry: "",
       });
@@ -6205,11 +6247,18 @@ export function DataEntryForm() {
                       />
                     </div>
                   )}
-                  {isBasicMapLoaded && basicMapDisplayedAddress && (
+                  {isBasicMapLoaded && basicMapSearchQuery && (
                     <p className="mt-2 text-[11px] text-emerald-900 break-all">
-                      検索住所: {basicMapDisplayedAddress}
+                      検索クエリ: {basicMapSearchQuery}
                     </p>
                   )}
+                  {isBasicMapLoaded &&
+                    basicMapDisplayedAddress &&
+                    basicMapDisplayedAddress !== basicMapSearchQuery && (
+                      <p className="mt-1 text-[11px] text-emerald-800 break-all">
+                        Google整形住所: {basicMapDisplayedAddress}
+                      </p>
+                    )}
                 </div>
                 {settings.isAddressCheckEnabled && (
                   <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
@@ -7190,9 +7239,17 @@ export function DataEntryForm() {
                         </div>
                       )}
                       {residentMapLoadedBySection.depart &&
-                        residentMapDisplayedAddressBySection.depart && (
+                        residentMapSearchQueryBySection.depart && (
                           <p className="mt-2 text-[11px] text-emerald-900 break-all">
-                            検索住所: {residentMapDisplayedAddressBySection.depart}
+                            検索クエリ: {residentMapSearchQueryBySection.depart}
+                          </p>
+                        )}
+                      {residentMapLoadedBySection.depart &&
+                        residentMapDisplayedAddressBySection.depart &&
+                        residentMapDisplayedAddressBySection.depart !==
+                          residentMapSearchQueryBySection.depart && (
+                          <p className="mt-1 text-[11px] text-emerald-800 break-all">
+                            Google整形住所: {residentMapDisplayedAddressBySection.depart}
                           </p>
                         )}
                     </div>
@@ -7238,9 +7295,17 @@ export function DataEntryForm() {
                         </div>
                       )}
                       {residentMapLoadedBySection.registry &&
-                        residentMapDisplayedAddressBySection.registry && (
+                        residentMapSearchQueryBySection.registry && (
                           <p className="mt-2 text-[11px] text-emerald-900 break-all">
-                            検索住所: {residentMapDisplayedAddressBySection.registry}
+                            検索クエリ: {residentMapSearchQueryBySection.registry}
+                          </p>
+                        )}
+                      {residentMapLoadedBySection.registry &&
+                        residentMapDisplayedAddressBySection.registry &&
+                        residentMapDisplayedAddressBySection.registry !==
+                          residentMapSearchQueryBySection.registry && (
+                          <p className="mt-1 text-[11px] text-emerald-800 break-all">
+                            Google整形住所: {residentMapDisplayedAddressBySection.registry}
                           </p>
                         )}
                     </div>
