@@ -13,6 +13,11 @@ import {
   ChevronUp,
   Settings,
   X,
+  Timer,
+  Play,
+  Pause,
+  RotateCcw,
+  SkipForward,
 } from "lucide-react";
 import { loadKenAllData, searchKenAllAddresses, type KenAllAddress } from "../lib/kenAll";
 import { findCitySuggestions, findTownSuggestions } from "../lib/addressSuggestions";
@@ -290,11 +295,16 @@ const RESIDENT_SECONDARY_SHEET_START_ROW = 3;
 const DEFAULT_SHEET_WRITE_FONT_SIZE = 10;
 const MIN_SHEET_WRITE_FONT_SIZE = 6;
 const MAX_SHEET_WRITE_FONT_SIZE = 72;
+const DEFAULT_POMODORO_FOCUS_MINUTES = 25;
+const DEFAULT_POMODORO_BREAK_MINUTES = 5;
+const MIN_POMODORO_MINUTES = 1;
+const MAX_POMODORO_MINUTES = 120;
 const KANJI_ME_EMBED_URL = "https://kanji.me/";
 type BasicSheetSelection = "basicPrimary" | "basicSecondary";
 type ResidentSheetSelection = "residentPrimary" | "residentSecondary";
 type BasicWriteSkipFieldName = "postalCode" | "prefecture" | "city" | "town";
 type BasicWriteSkipFields = Record<BasicWriteSkipFieldName, boolean>;
+type PomodoroPhase = "focus" | "break";
 
 const DEFAULT_BASIC_WRITE_SKIP_FIELDS: BasicWriteSkipFields = {
   postalCode: false,
@@ -303,12 +313,22 @@ const DEFAULT_BASIC_WRITE_SKIP_FIELDS: BasicWriteSkipFields = {
   town: false,
 };
 
+interface PomodoroPersistedState {
+  phase: PomodoroPhase;
+  secondsRemaining: number;
+  focusMinutes: number;
+  breakMinutes: number;
+  isRunning: boolean;
+  completedFocusSessions: number;
+}
+
 interface ReloadPersistedState {
   mode: "basic" | "resident";
   viewMode: "pdf" | "sheet" | "kanji";
   phoneInputMode: PhoneInputMode;
   formData: FormData;
   basicWriteSkipFields: BasicWriteSkipFields;
+  pomodoro: PomodoroPersistedState;
   residentFormData: ResidentFormData;
   savedEntries: SavedEntry[];
   savedResidentEntries: SavedResidentEntry[];
@@ -328,6 +348,79 @@ const normalizeBasicWriteSkipFieldsFromUnknown = (value: unknown): BasicWriteSki
     prefecture: record.prefecture === true,
     city: record.city === true,
     town: record.town === true,
+  };
+};
+
+const normalizePomodoroMinutes = (value: unknown, fallback: number): number => {
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+
+  const rounded = Math.floor(numericValue);
+  if (rounded < MIN_POMODORO_MINUTES) {
+    return MIN_POMODORO_MINUTES;
+  }
+  if (rounded > MAX_POMODORO_MINUTES) {
+    return MAX_POMODORO_MINUTES;
+  }
+  return rounded;
+};
+
+const getPomodoroDurationSeconds = (
+  phase: PomodoroPhase,
+  focusMinutes: number,
+  breakMinutes: number
+): number => {
+  return (phase === "focus" ? focusMinutes : breakMinutes) * 60;
+};
+
+const normalizePomodoroPersistedStateFromUnknown = (
+  value: unknown
+): PomodoroPersistedState => {
+  const source = typeof value === "object" && value !== null ? value : {};
+  const record = source as Record<string, unknown>;
+  const phase: PomodoroPhase = record.phase === "break" ? "break" : "focus";
+  const focusMinutes = normalizePomodoroMinutes(
+    record.focusMinutes,
+    DEFAULT_POMODORO_FOCUS_MINUTES
+  );
+  const breakMinutes = normalizePomodoroMinutes(
+    record.breakMinutes,
+    DEFAULT_POMODORO_BREAK_MINUTES
+  );
+  const maxSeconds = getPomodoroDurationSeconds(phase, focusMinutes, breakMinutes);
+  const secondsSource =
+    typeof record.secondsRemaining === "number"
+      ? record.secondsRemaining
+      : typeof record.secondsRemaining === "string"
+        ? Number(record.secondsRemaining)
+        : Number.NaN;
+  const secondsRemaining = Number.isFinite(secondsSource)
+    ? Math.min(maxSeconds, Math.max(0, Math.floor(secondsSource)))
+    : maxSeconds;
+  const completedFocusSessionsSource =
+    typeof record.completedFocusSessions === "number"
+      ? record.completedFocusSessions
+      : typeof record.completedFocusSessions === "string"
+        ? Number(record.completedFocusSessions)
+        : Number.NaN;
+  const completedFocusSessions = Number.isFinite(completedFocusSessionsSource)
+    ? Math.max(0, Math.floor(completedFocusSessionsSource))
+    : 0;
+
+  return {
+    phase,
+    secondsRemaining,
+    focusMinutes,
+    breakMinutes,
+    isRunning: record.isRunning === true,
+    completedFocusSessions,
   };
 };
 
@@ -1704,6 +1797,19 @@ export function DataEntryForm() {
   const [basicWriteSkipFields, setBasicWriteSkipFields] = useState<BasicWriteSkipFields>({
     ...DEFAULT_BASIC_WRITE_SKIP_FIELDS,
   });
+  const [pomodoroPhase, setPomodoroPhase] = useState<PomodoroPhase>("focus");
+  const [pomodoroFocusMinutes, setPomodoroFocusMinutes] = useState(
+    DEFAULT_POMODORO_FOCUS_MINUTES
+  );
+  const [pomodoroBreakMinutes, setPomodoroBreakMinutes] = useState(
+    DEFAULT_POMODORO_BREAK_MINUTES
+  );
+  const [pomodoroSecondsRemaining, setPomodoroSecondsRemaining] = useState(
+    DEFAULT_POMODORO_FOCUS_MINUTES * 60
+  );
+  const [isPomodoroRunning, setIsPomodoroRunning] = useState(false);
+  const [completedPomodoroFocusSessions, setCompletedPomodoroFocusSessions] =
+    useState(0);
 
   const [residentFormData, setResidentFormData] = useState<ResidentFormData>({
     ...DEFAULT_RESIDENT_FORM_DATA,
@@ -2245,6 +2351,13 @@ export function DataEntryForm() {
         setBasicWriteSkipFields(
           normalizeBasicWriteSkipFieldsFromUnknown(parsed.basicWriteSkipFields)
         );
+        const normalizedPomodoro = normalizePomodoroPersistedStateFromUnknown(parsed.pomodoro);
+        setPomodoroPhase(normalizedPomodoro.phase);
+        setPomodoroFocusMinutes(normalizedPomodoro.focusMinutes);
+        setPomodoroBreakMinutes(normalizedPomodoro.breakMinutes);
+        setPomodoroSecondsRemaining(normalizedPomodoro.secondsRemaining);
+        setIsPomodoroRunning(normalizedPomodoro.isRunning);
+        setCompletedPomodoroFocusSessions(normalizedPomodoro.completedFocusSessions);
         const normalizedResidentFormData = normalizeResidentFormDataFromUnknown(
           parsed.residentFormData
         );
@@ -2301,6 +2414,14 @@ export function DataEntryForm() {
       phoneInputMode,
       formData,
       basicWriteSkipFields,
+      pomodoro: {
+        phase: pomodoroPhase,
+        secondsRemaining: pomodoroSecondsRemaining,
+        focusMinutes: pomodoroFocusMinutes,
+        breakMinutes: pomodoroBreakMinutes,
+        isRunning: isPomodoroRunning,
+        completedFocusSessions: completedPomodoroFocusSessions,
+      },
       residentFormData,
       savedEntries,
       savedResidentEntries,
@@ -2321,6 +2442,12 @@ export function DataEntryForm() {
     phoneInputMode,
     formData,
     basicWriteSkipFields,
+    pomodoroPhase,
+    pomodoroFocusMinutes,
+    pomodoroBreakMinutes,
+    pomodoroSecondsRemaining,
+    isPomodoroRunning,
+    completedPomodoroFocusSessions,
     residentFormData,
     savedEntries,
     savedResidentEntries,
@@ -2693,6 +2820,94 @@ export function DataEntryForm() {
       [section]: null,
     }));
   };
+
+  const formatPomodoroTime = (seconds: number): string => {
+    const clampedSeconds = Math.max(0, Math.floor(seconds));
+    const minutesPart = Math.floor(clampedSeconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const secondsPart = (clampedSeconds % 60).toString().padStart(2, "0");
+    return `${minutesPart}:${secondsPart}`;
+  };
+
+  const handlePomodoroToggle = () => {
+    setIsPomodoroRunning((prev) => !prev);
+  };
+
+  const handlePomodoroReset = () => {
+    setIsPomodoroRunning(false);
+    setPomodoroPhase("focus");
+    setPomodoroSecondsRemaining(
+      getPomodoroDurationSeconds("focus", pomodoroFocusMinutes, pomodoroBreakMinutes)
+    );
+  };
+
+  const handlePomodoroSkipPhase = () => {
+    setPomodoroPhase((prev) => {
+      const nextPhase: PomodoroPhase = prev === "focus" ? "break" : "focus";
+      setPomodoroSecondsRemaining(
+        getPomodoroDurationSeconds(nextPhase, pomodoroFocusMinutes, pomodoroBreakMinutes)
+      );
+      return nextPhase;
+    });
+  };
+
+  const handlePomodoroFocusMinutesChange = (value: string) => {
+    setPomodoroFocusMinutes(
+      normalizePomodoroMinutes(value, DEFAULT_POMODORO_FOCUS_MINUTES)
+    );
+  };
+
+  const handlePomodoroBreakMinutesChange = (value: string) => {
+    setPomodoroBreakMinutes(
+      normalizePomodoroMinutes(value, DEFAULT_POMODORO_BREAK_MINUTES)
+    );
+  };
+
+  useEffect(() => {
+    if (!isPomodoroRunning) {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      setPomodoroSecondsRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [isPomodoroRunning]);
+
+  useEffect(() => {
+    if (!isPomodoroRunning || pomodoroSecondsRemaining > 0) {
+      return;
+    }
+
+    if (pomodoroPhase === "focus") {
+      setCompletedPomodoroFocusSessions((prev) => prev + 1);
+    }
+
+    const nextPhase: PomodoroPhase = pomodoroPhase === "focus" ? "break" : "focus";
+    setPomodoroPhase(nextPhase);
+    setPomodoroSecondsRemaining(
+      getPomodoroDurationSeconds(nextPhase, pomodoroFocusMinutes, pomodoroBreakMinutes)
+    );
+  }, [
+    isPomodoroRunning,
+    pomodoroSecondsRemaining,
+    pomodoroPhase,
+    pomodoroFocusMinutes,
+    pomodoroBreakMinutes,
+  ]);
+
+  useEffect(() => {
+    if (isPomodoroRunning) {
+      return;
+    }
+    setPomodoroSecondsRemaining(
+      getPomodoroDurationSeconds(pomodoroPhase, pomodoroFocusMinutes, pomodoroBreakMinutes)
+    );
+  }, [isPomodoroRunning, pomodoroPhase, pomodoroFocusMinutes, pomodoroBreakMinutes]);
 
   const handleBasicWriteSkipFieldToggle = (
     fieldName: BasicWriteSkipFieldName,
@@ -5271,6 +5486,93 @@ export function DataEntryForm() {
               <FileUser className="w-4 h-4" />
               住民票モード
             </button>
+          </div>
+
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Timer className="w-4 h-4 text-amber-700" />
+                <p className="text-sm font-semibold text-amber-900">ポモドーロタイマー</p>
+              </div>
+              <span
+                className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${
+                  pomodoroPhase === "focus"
+                    ? "bg-amber-200 text-amber-900"
+                    : "bg-emerald-200 text-emerald-900"
+                }`}
+              >
+                {pomodoroPhase === "focus" ? "作業時間" : "休憩時間"}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-3xl tracking-widest tabular-nums text-amber-950">
+                  {formatPomodoroTime(pomodoroSecondsRemaining)}
+                </p>
+                <p className="text-xs text-amber-800">
+                  完了セット: {completedPomodoroFocusSessions}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePomodoroToggle}
+                  className="px-3 py-1.5 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 flex items-center gap-1"
+                >
+                  {isPomodoroRunning ? (
+                    <>
+                      <Pause className="w-3.5 h-3.5" />
+                      一時停止
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3.5 h-3.5" />
+                      開始
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePomodoroSkipPhase}
+                  className="px-3 py-1.5 rounded bg-sky-600 text-white text-xs hover:bg-sky-700 flex items-center gap-1"
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  フェーズ切替
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePomodoroReset}
+                  className="px-3 py-1.5 rounded bg-gray-600 text-white text-xs hover:bg-gray-700 flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  リセット
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="text-xs text-amber-900">
+                作業(分)
+                <input
+                  type="number"
+                  min={MIN_POMODORO_MINUTES}
+                  max={MAX_POMODORO_MINUTES}
+                  value={pomodoroFocusMinutes}
+                  onChange={(e) => handlePomodoroFocusMinutesChange(e.target.value)}
+                  className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </label>
+              <label className="text-xs text-amber-900">
+                休憩(分)
+                <input
+                  type="number"
+                  min={MIN_POMODORO_MINUTES}
+                  max={MAX_POMODORO_MINUTES}
+                  value={pomodoroBreakMinutes}
+                  onChange={(e) => handlePomodoroBreakMinutesChange(e.target.value)}
+                  className="mt-1 w-full px-2 py-1.5 border border-amber-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </label>
+            </div>
           </div>
 
           {mode === "basic" ? (
