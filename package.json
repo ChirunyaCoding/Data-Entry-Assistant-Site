@@ -1,7 +1,7 @@
 {
   "name": "@figma/my-make-file",
   "private": true,
-  "version": "0.4.25",
+  "version": "0.4.26",
   "type": "module",
   "scripts": {
     "generate:ken-all-index": "node scripts/build-ken-all-index.mjs",

@@ -1143,8 +1143,8 @@ const expandCompanyShortcut = (rawValue: string): string => {
 };
 
 const POSITION_SHORTCUT_MAP: Record<string, string> = {
-  da: "代表取締役　",
-  だ: "代表取締役　",
+  da: "代表取締役",
+  だ: "代表取締役",
 };
 
 const expandPositionShortcut = (rawValue: string): string => {
@@ -1152,7 +1152,11 @@ const expandPositionShortcut = (rawValue: string): string => {
   if (!key) {
     return rawValue;
   }
-  return POSITION_SHORTCUT_MAP[key] ?? rawValue;
+  const expanded = POSITION_SHORTCUT_MAP[key];
+  if (!expanded) {
+    return rawValue;
+  }
+  return expanded.replace(/[ 　]+$/g, "");
 };
 
 interface VirtualSuggestionListProps {
