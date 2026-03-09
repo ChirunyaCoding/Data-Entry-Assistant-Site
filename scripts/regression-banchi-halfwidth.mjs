@@ -53,7 +53,7 @@ const formatBanchiValue = (rawValue, options) => {
     : toFullWidthAlphabet(toFullWidthDigits(normalized));
 
   return normalizedAlphaNumeric.replace(
-    /[-‐‑‒–—―ｰ]/g,
+    /[-‐‑‒–—―ｰー]/g,
     options?.halfWidthHyphen ? "-" : "－"
   );
 };
@@ -75,6 +75,11 @@ const cases = [
     name: "全角英字と全角ハイフンは半角化される",
     input: "Ａ－１２",
     expected: "A-12",
+  },
+  {
+    name: "IMEの長音記号ーも半角ハイフンへ正規化される（回帰）",
+    input: "１ー２",
+    expected: "1-2",
   },
   {
     name: "空白だけの入力は空文字になる（異常系）",

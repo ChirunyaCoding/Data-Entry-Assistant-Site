@@ -1053,7 +1053,7 @@ const formatBanchiValue = (
     : toFullWidthAlphabet(toFullWidthDigits(normalized));
 
   return normalizedAlphaNumeric.replace(
-    /[-‐‑‒–—―ｰ]/g,
+    /[-‐‑‒–—―ｰー]/g,
     options?.halfWidthHyphen ? "-" : "－"
   );
 };
