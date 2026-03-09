@@ -448,7 +448,7 @@ const normalizeFormDataFromUnknown = (value: unknown): FormData => {
     ooaza: readStringField(record, "ooaza"),
     aza: readStringField(record, "aza"),
     koaza: readStringField(record, "koaza"),
-    banchi: readStringField(record, "banchi"),
+    banchi: normalizeBanchiValueAsHalfWidth(readStringField(record, "banchi")),
     building: readStringField(record, "building"),
     company: readStringField(record, "company"),
     position: readStringField(record, "position"),
@@ -470,7 +470,9 @@ const normalizeResidentFormDataFromUnknown = (value: unknown): ResidentFormData 
     departOoaza: readStringField(record, "departOoaza"),
     departAza: readStringField(record, "departAza"),
     departKoaza: readStringField(record, "departKoaza"),
-    departBanchi: readStringField(record, "departBanchi"),
+    departBanchi: normalizeBanchiValueAsHalfWidth(
+      readStringField(record, "departBanchi")
+    ),
     departBuilding: readStringField(record, "departBuilding"),
     registryName: readStringField(record, "registryName"),
     registryPrefecture: readStringField(record, "registryPrefecture"),
@@ -479,7 +481,9 @@ const normalizeResidentFormDataFromUnknown = (value: unknown): ResidentFormData 
     registryOoaza: readStringField(record, "registryOoaza"),
     registryAza: readStringField(record, "registryAza"),
     registryKoaza: readStringField(record, "registryKoaza"),
-    registryBanchi: readStringField(record, "registryBanchi"),
+    registryBanchi: normalizeBanchiValueAsHalfWidth(
+      readStringField(record, "registryBanchi")
+    ),
     registryBuilding: readStringField(record, "registryBuilding"),
     residentAlias: readStringField(record, "residentAlias"),
   };
@@ -1053,6 +1057,13 @@ const formatBanchiValue = (
     options?.halfWidthHyphen ? "-" : "－"
   );
 };
+
+function normalizeBanchiValueAsHalfWidth(rawValue: string): string {
+  return formatBanchiValue(rawValue, {
+    halfWidthAlphaNumeric: true,
+    halfWidthHyphen: true,
+  });
+}
 
 const AREA_FIELD_PREFIXES = {
   ooaza: "大字",
@@ -3098,10 +3109,7 @@ export function DataEntryForm() {
     if (name === "banchi") {
       setFormData((prev) => ({
         ...prev,
-        banchi: formatBanchiValue(value, {
-          halfWidthAlphaNumeric: true,
-          halfWidthHyphen: true,
-        }),
+        banchi: normalizeBanchiValueAsHalfWidth(value),
       }));
       return;
     }
@@ -3497,7 +3505,7 @@ export function DataEntryForm() {
     if (name === "departBanchi" || name === "registryBanchi") {
       setResidentFormData((prev) => ({
         ...prev,
-        [name]: formatBanchiValue(value),
+        [name]: normalizeBanchiValueAsHalfWidth(value),
       }));
       return;
     }
